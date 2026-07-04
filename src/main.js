@@ -1,4 +1,4 @@
-import { createGame, serializeGame, deserializeGame } from './state/gameState.js';
+import { createGame, serializeGame, deserializeGame, finishChildhood, pushFeed } from './state/gameState.js';
 import { simulateSeason, rollPressConferenceQuestion } from './engine/season.js';
 import { rollNationalizationOpportunity } from './engine/nationalTeam.js';
 import { HOBBIES, TRAVEL_OPTIONS, buyLuxury } from './engine/personalLife.js';
@@ -8,6 +8,7 @@ import { overallRating, POSITION_LABELS } from './engine/player.js';
 import { computeLegacy, buildCareerSummary } from './engine/legacy.js';
 import { RARE_STATE_DEFS } from './engine/rareStates.js';
 import { COUNTRY_BY_CODE } from './data/countries.js';
+import { CHILDHOOD_STAGES, optionsForStage, advanceChildhoodStage } from './engine/childhood.js';
 import { showModal, showInfoModal, escapeHtml } from './ui/modal.js';
 import { renderPlayerCard } from './ui/components/playerCard.js';
 import { renderAttributeBars } from './ui/components/attributeBars.js';
@@ -31,6 +32,11 @@ function render() {
     attachCreationHandlers();
     return;
   }
+  if (game.phase === 'childhood') {
+    app.innerHTML = renderChildhoodScreen();
+    attachChildhoodHandlers();
+    return;
+  }
   if (game.retired) {
     app.innerHTML = renderRetirementScreen(game);
     attachRetirementHandlers();
@@ -38,6 +44,79 @@ function render() {
   }
   app.innerHTML = renderGameShell();
   attachGameHandlers();
+}
+
+// ---------------------------------------------------------------------------
+// Infancia (0-15 años)
+// ---------------------------------------------------------------------------
+function renderChildhoodScreen() {
+  const pl = game.personalLife;
+  const stage = CHILDHOOD_STAGES[game.childhood.stageIndex];
+  return `
+    <div class="topbar">
+      <div class="stat"><span class="flag">${game.country.flag}</span><b>${game.childAge}a</b></div>
+      <div class="stat">🗓️<b>${game.birthWorldYear + game.childAge}</b></div>
+    </div>
+    <div class="screen">
+      <div class="card">
+        <h3>${escapeHtml(game.childName)}</h3>
+        <p>${escapeHtml(pl.family.father.archetype.text)}. ${escapeHtml(pl.family.mother.archetype.text)}.</p>
+      </div>
+      <div class="card">
+        <h3>Infancia</h3>
+        ${renderFeed(game.feed)}
+      </div>
+    </div>
+    <div class="advance-bar">
+      <button class="btn primary advance-btn" data-advance-childhood ${busy ? 'disabled' : ''}>
+        ${stage ? `Continuar: ${stage.title} ▶` : 'Debutar como profesional ▶'}
+      </button>
+    </div>
+  `;
+}
+
+function attachChildhoodHandlers() {
+  const btn = app.querySelector('[data-advance-childhood]');
+  if (btn) btn.addEventListener('click', handleAdvanceChildhood);
+}
+
+async function handleAdvanceChildhood() {
+  if (busy) return;
+  busy = true;
+  render();
+
+  const stage = CHILDHOOD_STAGES[game.childhood.stageIndex];
+  let optionId = null;
+  if (stage.prompt) {
+    const pool = optionsForStage(stage.id);
+    optionId = await showModal({
+      title: stage.title,
+      desc: stage.prompt,
+      options: pool.map((o) => ({ label: o.label, value: o.id })),
+    });
+  }
+
+  const { feed, finished } = advanceChildhoodStage(game, optionId, game.rng);
+  for (const text of feed) pushFeed(game, text, 'event');
+
+  let transitionFeed = [];
+  if (finished) {
+    transitionFeed = finishChildhood(game);
+    for (const text of transitionFeed) pushFeed(game, text, 'rare');
+  }
+
+  busy = false;
+  render();
+
+  const modalText = finished ? transitionFeed.join(' ') : feed.join(' ');
+  if (modalText) {
+    await showInfoModal({
+      title: finished ? '⚽ ¡Debut profesional!' : stage.title,
+      text: modalText,
+      rare: finished,
+    });
+    render();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -517,39 +596,52 @@ async function handleAdvanceYear() {
     });
   }
 
+  const trainingPrompt =
+    game.player.age >= 32
+      ? '¿En qué te enfocas esta temporada? A esta edad, cada decisión pesa el doble.'
+      : game.player.age <= 20
+      ? '¿En qué te enfocas esta temporada mientras terminas de formarte?'
+      : '¿En qué te enfocas esta temporada?';
   decisions.training = await showModal({
     title: 'Entrenamiento',
-    desc: '¿En qué te enfocas esta temporada?',
-    options: [
+    desc: trainingPrompt,
+    options: game.rng.shuffle([
       { label: 'Técnico: tiro, pase y regate', value: 'tecnico' },
       { label: 'Físico: ritmo y potencia', value: 'fisico' },
       { label: 'Invisible: descanso, nutrición, psicología', value: 'invisible' },
-    ],
+    ]),
   });
 
+  // Se muestra un subconjunto aleatorio (no siempre las mismas opciones ni el mismo orden).
+  const hobbyPool = game.rng.shuffle(Object.entries(HOBBIES).map(([k, v]) => ({ label: v.label, value: k })));
   decisions.hobby = await showModal({
     title: 'Tiempo libre',
     desc: '¿A qué dedicas tus ratos libres este año?',
-    options: Object.entries(HOBBIES)
-      .map(([k, v]) => ({ label: v.label, value: k }))
-      .concat([{ label: 'Nada en particular', value: null }]),
+    options: hobbyPool.slice(0, 3).concat([{ label: 'Nada en particular', value: null }]),
   });
 
-  decisions.travel = await showModal({
-    title: 'Vacaciones de verano',
-    desc: '¿Cómo descansas este verano?',
-    options: Object.entries(TRAVEL_OPTIONS).map(([k, v]) => ({ label: v.label, value: k })),
-  });
+  if (game.rng.chance(0.75)) {
+    decisions.travel = await showModal({
+      title: 'Vacaciones de verano',
+      desc: '¿Cómo descansas este verano?',
+      options: game.rng.shuffle(Object.entries(TRAVEL_OPTIONS).map(([k, v]) => ({ label: v.label, value: k }))),
+    });
+  } else {
+    decisions.travel = null; // año sin vacaciones especiales, sigues concentrado en lo tuyo
+  }
 
+  const socialPool = game.rng.shuffle([
+    { label: 'Vida tranquila, sin excesos', value: { party: 'ninguna', gambling: 'no' } },
+    { label: 'Salidas moderadas con el grupo', value: { party: 'moderada', gambling: 'no' } },
+    { label: 'Noches intensas de fiesta', value: { party: 'intensa', gambling: 'no' } },
+    { label: 'Apuestas en el casino', value: { party: 'ninguna', gambling: 'ocasional' } },
+    { label: 'Una noche de más en las apuestas', value: { party: 'ninguna', gambling: 'fuerte' } },
+    { label: 'Quedarte en casa con la familia', value: { party: 'ninguna', gambling: 'no' } },
+  ]);
   const social = await showModal({
     title: 'Vida social',
     desc: '¿Cómo llevas tu vida fuera de la cancha?',
-    options: [
-      { label: 'Vida tranquila, sin excesos', value: { party: 'ninguna', gambling: 'no' } },
-      { label: 'Salidas moderadas con el grupo', value: { party: 'moderada', gambling: 'no' } },
-      { label: 'Noches intensas de fiesta', value: { party: 'intensa', gambling: 'no' } },
-      { label: 'Apuestas en el casino', value: { party: 'ninguna', gambling: 'ocasional' } },
-    ],
+    options: socialPool.slice(0, 4),
   });
   decisions.party = social.party;
   decisions.gambling = social.gambling;

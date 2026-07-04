@@ -97,4 +97,44 @@ export const PRESS_QUESTIONS = [
       { label: 'No responder directamente', moraleD: 0, famedD: 0, pressD: 0 },
     ],
   },
+  {
+    q: 'Un periodista te compara con la nueva promesa del equipo.',
+    options: [
+      { label: 'Elogiar al joven sin rodeos', moraleD: 2, famedD: 2, pressD: 5 },
+      { label: '"Todavía tiene mucho que aprender de mí"', moraleD: 1, famedD: 3, pressD: -3 },
+      { label: 'Cambiar de tema con humor', moraleD: 2, famedD: 1, pressD: 1 },
+    ],
+  },
+  {
+    q: '¿Qué opinas de la decisión arbitral del último partido?',
+    options: [
+      { label: 'Criticarla sin filtro', moraleD: 1, famedD: 3, pressD: -6 },
+      { label: '"Prefiero no hablar de los árbitros"', moraleD: 0, famedD: 0, pressD: 2 },
+      { label: 'Restarle importancia y mirar hacia adelante', moraleD: 2, famedD: 0, pressD: 4 },
+    ],
+  },
+  {
+    q: 'Te preguntan por tu relación con el entrenador tras rumores de tensión.',
+    options: [
+      { label: 'Negar cualquier problema públicamente', moraleD: 1, famedD: -1, pressD: 4 },
+      { label: 'Reconocer diferencias pero remarcar el respeto mutuo', moraleD: 2, famedD: 1, pressD: 3 },
+      { label: 'Dejar la respuesta abierta a la interpretación', moraleD: -1, famedD: 2, pressD: -2 },
+    ],
+  },
+  {
+    q: 'Un hincha te grita algo feo al salir del estadio y las cámaras lo captan todo.',
+    options: [
+      { label: 'Responder con una sonrisa y seguir caminando', moraleD: 3, famedD: 2, pressD: 5 },
+      { label: 'Encararlo verbalmente', moraleD: -3, famedD: 2, pressD: -7 },
+      { label: 'Ignorarlo por completo', moraleD: 0, famedD: 0, pressD: 1 },
+    ],
+  },
+  {
+    q: 'Te preguntan qué significaría para vos ganar el próximo título con el club.',
+    options: [
+      { label: 'Hablar del esfuerzo colectivo del plantel', moraleD: 3, famedD: 1, pressD: 4, loyaltySignal: true },
+      { label: 'Hablar de tu propio legado personal', moraleD: 1, famedD: 4, pressD: -2 },
+      { label: 'Dedicarlo a tu familia y tu país de origen', moraleD: 4, famedD: 2, pressD: 3 },
+    ],
+  },
 ];

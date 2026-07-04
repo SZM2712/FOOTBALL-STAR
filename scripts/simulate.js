@@ -2,12 +2,13 @@
 // distribución de estados raros, retiros y legados sea la esperada.
 // Uso: node scripts/simulate.js [N]
 
-import { createGame } from '../src/state/gameState.js';
+import { createGame, finishChildhood } from '../src/state/gameState.js';
 import { simulateSeason } from '../src/engine/season.js';
 import { acceptOffer, rejectOffer } from '../src/engine/transferMarket.js';
 import { computeLegacy, LEGACY_TITLES } from '../src/engine/legacy.js';
 import { HOBBIES, TRAVEL_OPTIONS } from '../src/engine/personalLife.js';
 import { MAX_RARE_STATES_PER_CAREER } from '../src/engine/rareStates.js';
+import { CHILDHOOD_STAGES, optionsForStage, advanceChildhoodStage } from '../src/engine/childhood.js';
 
 const N = Number(process.argv[2]) || 1000;
 
@@ -21,8 +22,18 @@ function autoDecide(state) {
   };
 }
 
+function playChildhood(state) {
+  for (const stage of CHILDHOOD_STAGES) {
+    const pool = optionsForStage(stage.id);
+    const optionId = pool ? state.rng.pick(pool).id : null;
+    const { finished } = advanceChildhoodStage(state, optionId, state.rng);
+    if (finished) finishChildhood(state);
+  }
+}
+
 function runCareer(seed) {
   const state = createGame(seed);
+  playChildhood(state);
   let iterations = 0;
   while (!state.retired && state.player.age < 40 && iterations < 30) {
     if (state.currentOffers && state.currentOffers.length) {

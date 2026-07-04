@@ -33,10 +33,15 @@ function samplePotential(rng) {
   return Math.max(58, Math.min(94, Math.round(base)));
 }
 
+/**
+ * options.childhood: modificadores acumulados durante la infancia (0-15),
+ * ver engine/childhood.js. Todos son opcionales y por defecto neutros.
+ */
 export function createPlayer(rng, country, options = {}) {
   const position = options.position || rng.pick(POSITIONS);
   const subRole = rng.pick(SUBROLES[position]);
-  const potential = options.potential ?? samplePotential(rng);
+  const ch = options.childhood || {};
+  const potential = options.potential ?? Math.max(58, Math.min(97, samplePotential(rng) + (ch.potentialMod || 0)));
   const startAge = 16;
   const factor = ageFactor(startAge, position);
 
@@ -45,12 +50,13 @@ export function createPlayer(rng, country, options = {}) {
     const w = POSITION_WEIGHTS[position][k];
     // atributos relevantes a la posición parten más altos, el resto más bajos
     const base = potential * factor * (0.55 + w * 1.6);
-    attrs[k] = clampAttr(Math.round(base + rng.gaussian(0, 4)));
+    const childBonus = ch.attrMods?.[k] || 0;
+    attrs[k] = clampAttr(Math.round(base + childBonus + rng.gaussian(0, 4)));
   }
 
   return {
     id: `p-${Math.floor(rng.float() * 1e9).toString(36)}`,
-    name: randomPersonName(rng, country.confed),
+    name: options.name || randomPersonName(rng, country.confed),
     countryCode: country.code,
     originalCountryCode: country.code,
     position,
@@ -58,8 +64,8 @@ export function createPlayer(rng, country, options = {}) {
     age: startAge,
     attrs,
     potential,
-    injuryProneness: Math.max(0.02, Math.min(0.4, rng.gaussian(0.1, 0.05))),
-    carisma: Math.round(Math.max(20, Math.min(90, rng.gaussian(50, 15)))),
+    injuryProneness: Math.max(0.02, Math.min(0.5, rng.gaussian(0.1, 0.05) + (ch.injuryMod || 0))),
+    carisma: Math.round(Math.max(15, Math.min(95, rng.gaussian(50, 15) + (ch.carismaMod || 0)))),
     chemistry: 55,
     morale: 70,
     form: 60,
