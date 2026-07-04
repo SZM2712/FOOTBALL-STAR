@@ -1,4 +1,4 @@
-import { randomPersonName } from '../data/names.js';
+import { randomPersonName, randomFemaleName } from '../data/names.js';
 
 const FATHER_ARCHETYPES = [
   { id: 'exigente', text: 'un padre exigente que fue futbolista frustrado y vive tu carrera como propia' },
@@ -14,7 +14,7 @@ const MOTHER_ARCHETYPES = [
 export function generateFamily(rng, confed) {
   return {
     father: { name: randomPersonName(rng, confed), archetype: rng.pick(FATHER_ARCHETYPES), relationship: 65 + rng.int(-10, 15), alive: true },
-    mother: { name: randomPersonName(rng, confed), archetype: rng.pick(MOTHER_ARCHETYPES), relationship: 70 + rng.int(-10, 15), alive: true },
+    mother: { name: randomFemaleName(rng, confed), archetype: rng.pick(MOTHER_ARCHETYPES), relationship: 70 + rng.int(-10, 15), alive: true },
     humble: rng.chance(0.55),
   };
 }
@@ -114,7 +114,7 @@ const PERSONAL_EVENTS = {
     eligible: (state) => !state.personalLife.partner,
     chance: (state) => 0.2 + state.fame / 400,
     build: (state, rng) => {
-      const name = randomPersonName(rng, state.country.confed);
+      const name = randomFemaleName(rng, state.country.confed);
       return {
         id: 'conocerAlguien',
         title: 'Alguien nuevo en tu vida',
@@ -414,6 +414,101 @@ const PERSONAL_EVENTS = {
             ],
       };
     },
+  },
+
+  entrenadorPadre: {
+    eligible: (state) => state.personalLife.family.father.alive && state.player.age <= 26,
+    chance: (state) => (state.personalLife.family.father.archetype.id === 'exigente' ? 0.12 : 0.06),
+    build: (state) => ({
+      id: 'entrenadorPadre',
+      title: 'Una oferta de tu padre',
+      desc: `${state.personalLife.family.father.name} te ofrece volver a ser tu entrenador personal en la pretemporada, como cuando eras chico.`,
+      options: [
+        {
+          label: 'Aceptar: entrenar con él',
+          run: (state) => {
+            state.player.attrs.men = clamp(state.player.attrs.men + 3);
+            state.personalLife.family.father.relationship = clamp(state.personalLife.family.father.relationship + 8);
+            if (state.rng.chance(0.25)) {
+              state.player.form = clamp(state.player.form - 5);
+              return `Entrenas con ${state.personalLife.family.father.name}, pero sus métodos ya quedaron viejos. Se acercan, aunque tu forma resiente un poco.`;
+            }
+            state.player.form = clamp(state.player.form + 6);
+            return `Entrenas con ${state.personalLife.family.father.name}. Vuelven a sentirse como en el potrero del barrio, y rinde.`;
+          },
+        },
+        {
+          label: 'Rechazar con cariño',
+          run: (state) => {
+            state.personalLife.family.father.relationship = clamp(state.personalLife.family.father.relationship - 4);
+            return 'Le agradeces, pero preferís seguir con el cuerpo técnico del club. Se lo toma bien, aunque un poco dolido.';
+          },
+        },
+      ],
+    }),
+  },
+
+  ahorrosFamilia: {
+    eligible: (state) => state.personalLife.family.humble && state.player.age <= 23 && (state.personalLife.family.father.alive || state.personalLife.family.mother.alive),
+    chance: () => 0.08,
+    build: (state) => ({
+      id: 'ahorrosFamilia',
+      title: 'Los ahorros de tus padres',
+      desc: 'Tus padres te ofrecen sus ahorros de toda la vida para pagarte un mejor preparador físico y un agente con más contactos.',
+      options: [
+        {
+          label: 'Aceptar el sacrificio',
+          run: (state, rng) => {
+            const gift = Math.min(state.money + 2, rng.range(0.5, 1.5));
+            state.money += gift;
+            state.player.attrs.phy = clamp(state.player.attrs.phy + 2);
+            state.personalLife.reputation = clamp(state.personalLife.reputation + 3);
+            return `Aceptas. Con lo poco que tienen, te dan €${gift.toFixed(1)}M y toda su fe. No pensás defraudarlos.`;
+          },
+        },
+        {
+          label: 'Rechazar: que se queden con lo suyo',
+          run: (state) => {
+            state.player.attrs.men = clamp(state.player.attrs.men + 2);
+            state.personalLife.reputation = clamp(state.personalLife.reputation + 5);
+            return 'Rechazas el ofrecimiento. Prefieres que guarden sus ahorros; te las arreglarás solo.';
+          },
+        },
+      ],
+    }),
+  },
+
+  mudanzaFamilia: {
+    eligible: (state) => (state.personalLife.family.father.alive || state.personalLife.family.mother.alive) && state.player.age >= 20,
+    chance: () => 0.05,
+    build: () => ({
+      id: 'mudanzaFamilia',
+      title: 'Tus padres quieren estar más cerca',
+      desc: 'Tus padres te ofrecen mudarse a la ciudad donde jugás, para acompañarte de cerca en esta etapa.',
+      options: [
+        {
+          label: 'Aceptar: que se muden con vos',
+          run: (state) => {
+            if (state.personalLife.family.father.alive) state.personalLife.family.father.relationship = clamp(state.personalLife.family.father.relationship + 6);
+            if (state.personalLife.family.mother.alive) state.personalLife.family.mother.relationship = clamp(state.personalLife.family.mother.relationship + 6);
+            state.player.morale = clamp(state.player.morale + 5);
+            if (state.personalLife.partner && state.rng.chance(0.2)) {
+              state.player.morale = clamp(state.player.morale - 4);
+              return 'Se mudan cerca tuyo. Los tenés siempre presentes, aunque tu pareja siente que perdieron algo de espacio propio.';
+            }
+            return 'Se mudan cerca tuyo. Tenerlos tan presentes te da una paz que no sabías que necesitabas.';
+          },
+        },
+        {
+          label: 'Mantener la distancia por ahora',
+          run: (state) => {
+            if (state.personalLife.family.father.alive) state.personalLife.family.father.relationship = clamp(state.personalLife.family.father.relationship - 3);
+            if (state.personalLife.family.mother.alive) state.personalLife.family.mother.relationship = clamp(state.personalLife.family.mother.relationship - 3);
+            return 'Les pedís un poco más de tiempo. Lo entienden, aunque se nota la distancia en las llamadas.';
+          },
+        },
+      ],
+    }),
   },
 };
 

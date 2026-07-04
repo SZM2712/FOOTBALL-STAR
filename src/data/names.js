@@ -48,7 +48,7 @@ export function randomClubName(rng, confed) {
   return `${rng.pick(CLUB_PREFIXES)} ${place} ${rng.pick(CLUB_SUFFIX_BY_CONFED[confed] || ['FC'])}`;
 }
 
-const FIRST_NAMES_BY_CONFED = {
+const MALE_FIRST_NAMES_BY_CONFED = {
   UEFA: ['Marco', 'Luca', 'Hugo', 'Mateo', 'Nico', 'Sven', 'Piotr', 'Dario', 'Théo', 'Erik', 'Kevin', 'Alex', 'Bruno', 'Iker', 'Rafa'],
   CONMEBOL: ['Santiago', 'Mateo', 'Bruno', 'Facundo', 'Emiliano', 'Rodrigo', 'Thiago', 'Gonzalo', 'Joaquín', 'Agustín'],
   CONCACAF: ['Carlos', 'José', 'Diego', 'Luis', 'Kevin', 'Andrés', 'Miguel', 'Alan'],
@@ -56,13 +56,31 @@ const FIRST_NAMES_BY_CONFED = {
   AFC: ['Kenji', 'Min-jun', 'Arman', 'Rashid', 'Wei', 'Suk', 'Hiro'],
   OFC: ['Sione', 'Manu', 'Tavita', 'Kalani'],
 };
+
+const FEMALE_FIRST_NAMES_BY_CONFED = {
+  UEFA: ['Sofía', 'Lucía', 'Elena', 'Mia', 'Nora', 'Ingrid', 'Kasia', 'Daria', 'Chloé', 'Erika', 'Nadia', 'Alexia', 'Bruna', 'Irene', 'Rafaela'],
+  CONMEBOL: ['Valentina', 'Camila', 'Martina', 'Julieta', 'Emilia', 'Rocío', 'Antonella', 'Florencia', 'Josefina', 'Agustina'],
+  CONCACAF: ['Carla', 'Josefina', 'Diana', 'Luisa', 'Karen', 'Andrea', 'Miguela', 'Alana'],
+  CAF: ['Amara', 'Aziza', 'Mousso', 'Emeka', 'Sipho', 'Yasmin', 'Amina', 'Kofia'],
+  AFC: ['Kenji', 'Min-ji', 'Arina', 'Rashida', 'Wei', 'Sook', 'Hina'],
+  OFC: ['Sione', 'Manuia', 'Tavita', 'Kalina'],
+};
+
 const LAST_NAME_SYLLABLES = SYLLABLES_LATIN.concat(SYLLABLES_SLAVIC, SYLLABLES_AFRO, SYLLABLES_ASIAN);
 
-export function randomPersonName(rng, confed) {
-  const first = rng.pick(FIRST_NAMES_BY_CONFED[confed] || FIRST_NAMES_BY_CONFED.UEFA);
+function buildLastName(rng) {
   let last = '';
   const n = rng.int(2, 3);
   for (let i = 0; i < n; i++) last += rng.pick(LAST_NAME_SYLLABLES);
-  last = last.charAt(0).toUpperCase() + last.slice(1);
-  return `${first} ${last}`;
+  return last.charAt(0).toUpperCase() + last.slice(1);
+}
+
+export function randomPersonName(rng, confed) {
+  const first = rng.pick(MALE_FIRST_NAMES_BY_CONFED[confed] || MALE_FIRST_NAMES_BY_CONFED.UEFA);
+  return `${first} ${buildLastName(rng)}`;
+}
+
+export function randomFemaleName(rng, confed) {
+  const first = rng.pick(FEMALE_FIRST_NAMES_BY_CONFED[confed] || FEMALE_FIRST_NAMES_BY_CONFED.UEFA);
+  return `${first} ${buildLastName(rng)}`;
 }
