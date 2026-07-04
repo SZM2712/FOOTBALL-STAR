@@ -125,6 +125,67 @@ test('si el usuario sale sustituido, su entrada queda marcada con el minuto exac
   assert.equal(replacement.subOnMinute, 63);
 });
 
+test('el orden de la alineación es por posición (arquero a delantero), no por calificación', () => {
+  const rng = new Rng('lineup-order-1');
+  const squad = generateSquad(rng, 'UEFA');
+  const lineup = ratePerformance({ squad, rng, teamGoals: 2, oppGoals: 3 });
+  const starters = lineup.filter((p) => !p.subOn);
+  const positions = starters.map((p) => p.position);
+  const order = { POR: 0, DEF: 1, MED: 2, DEL: 3 };
+  for (let i = 1; i < positions.length; i++) {
+    assert.ok(order[positions[i]] >= order[positions[i - 1]], `el orden debería ser POR->DEF->MED->DEL, se encontró ${positions.join(',')}`);
+  }
+  const ratings = starters.map((p) => p.rating);
+  assert.notDeepEqual(
+    [...ratings].sort((a, b) => b - a),
+    ratings,
+    'no debería coincidir con un orden por calificación (con estos datos no debería estar ya ordenado por rating)'
+  );
+});
+
+test('los suplentes que entraron quedan listados al final, en el orden en que ingresaron', () => {
+  const rng = new Rng('lineup-order-2');
+  let found = false;
+  for (let i = 0; i < 40 && !found; i++) {
+    const squad = generateSquad(rng, 'UEFA');
+    const lineup = ratePerformance({ squad, rng, teamGoals: 1, oppGoals: 1 });
+    const subsOn = lineup.filter((p) => p.subOn);
+    if (subsOn.length >= 2) {
+      found = true;
+      const idxInLineup = subsOn.map((s) => lineup.indexOf(s));
+      assert.ok(idxInLineup.every((idx, i) => i === 0 || idx > idxInLineup[i - 1]), 'los suplentes deben aparecer en orden');
+      const minutes = subsOn.map((s) => s.subOnMinute);
+      assert.ok(minutes.every((min, i) => i === 0 || min >= minutes[i - 1]), 'los suplentes deben estar ordenados por minuto de ingreso');
+    }
+  }
+  assert.ok(found, 'en 40 partidos debería haber aparecido algún caso con 2+ cambios');
+});
+
+test('el usuario puede entrar de cambio (arranca en el banco): reemplaza a un titular al minuto decidido', () => {
+  const rng = new Rng('lineup-benchon-1');
+  const squad = generateSquad(rng, 'UEFA');
+  const lineup = ratePerformance({
+    squad,
+    rng,
+    teamGoals: 2,
+    oppGoals: 1,
+    ownGoals: 1,
+    ownAssists: 0,
+    userEntry: { name: 'Pruebita Suplente', position: 'DEL', rating: 8.0, goals: 1, assists: 0, subOnMinute: 70 },
+  });
+  const mine = lineup.find((p) => p.isUser);
+  assert.ok(mine, 'debe existir la entrada del usuario');
+  assert.equal(mine.subOn, true);
+  assert.equal(mine.subOnMinute, 70);
+  assert.equal(mine.goals, 1);
+  assert.ok(mine.replaced, 'debe registrar a quién reemplazó');
+  const replaced = lineup.find((p) => p.name === mine.replaced);
+  assert.ok(replaced, 'el titular reemplazado debe seguir apareciendo en la ficha');
+  assert.equal(replaced.subOff, true);
+  assert.equal(replaced.subOffMinute, 70);
+  assert.equal(lineup.filter((p) => p.isUser).length, 1, 'no debe haber una entrada duplicada del usuario');
+});
+
 const basicDecisions = { trainingFocus: 'pac', hobby: null, travel: null, party: 'ninguna', gambling: 'no' };
 
 test('tras jugar una temporada, state.lastMatchLineups queda con las alineaciones del último partido', () => {

@@ -7,6 +7,7 @@ import {
   startSeason,
   playNextMatch,
   rollPenaltyOpportunityForMatch,
+  rollBenchChallenge,
   hasPendingSubReaction,
   resolveSubReaction,
 } from '../src/engine/season.js';
@@ -58,6 +59,7 @@ test('la tabla se actualiza jornada a jornada, no solo al cierre de temporada', 
   assert.ok(state.leagueTable, 'debe existir una tabla apenas arranca la temporada (0 partidos jugados)');
   assert.ok(state.leagueTable.rows.every((r) => r.played === 0));
 
+  rollBenchChallenge(state);
   rollPenaltyOpportunityForMatch(state);
   playNextMatch(state, basicDecisions);
   assert.ok(

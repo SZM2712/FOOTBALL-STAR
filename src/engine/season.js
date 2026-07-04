@@ -336,13 +336,42 @@ export function startSeason(state, decisions = {}) {
  * resolver el partido. Guarda el resultado en pendingSeason.pendingPenalty. */
 export function rollPenaltyOpportunityForMatch(state) {
   const ps = state.pendingSeason;
-  if (!ps || ps.matchIndex >= ps.matchesInSeason || ps.weeksOut > 0 || ps.suspendedMatches > 0) {
+  if (!ps || ps.matchIndex >= ps.matchesInSeason || ps.weeksOut > 0 || ps.suspendedMatches > 0 || ps.pendingBenchStart) {
     if (ps) ps.pendingPenalty = false;
     return false;
   }
   const has = rollPenaltyOpportunity(state.player, state.rng);
   ps.pendingPenalty = has;
   return has;
+}
+
+/** Opciones de respuesta cuando el entrenador te deja en el banco para un
+ * partido: cómo te mentalizás determina tus chances de entrar y de
+ * aprovechar bien los minutos si te toca jugar. */
+export const BENCH_CHALLENGE_OPTIONS = [
+  { label: 'Visualizar tu oportunidad con confianza', readinessD: 14 },
+  { label: 'Aceptarlo con profesionalismo, listo para cuando te toque', readinessD: 6 },
+  { label: 'Reclamarle al entrenador que deberías ser titular', readinessD: -6, managerD: -8 },
+];
+
+/** Se llama ANTES de playNextMatch (mismo patrón que rollPenaltyOpportunityForMatch):
+ * decide si el entrenador te deja en el banco para este partido. Si es así,
+ * devuelve el desafío para que la UI pregunte cómo te lo tomás; si no,
+ * devuelve null y el partido sigue el flujo normal (arrancás titular). */
+export function rollBenchChallenge(state) {
+  const ps = state.pendingSeason;
+  if (!ps || ps.matchIndex >= ps.matchesInSeason || ps.weeksOut > 0 || ps.suspendedMatches > 0) {
+    if (ps) ps.pendingBenchStart = false;
+    return null;
+  }
+  const benchProb = Math.max(0.05, Math.min(0.3, 0.12 + (50 - state.managerRelationship) / 250));
+  const benched = state.rng.chance(benchProb);
+  ps.pendingBenchStart = benched;
+  if (!benched) return null;
+  return {
+    manager: state.managerName,
+    text: `${state.managerName || 'El entrenador'} decide dejarte en el banco para este partido. ¿Cómo lo encarás?`,
+  };
 }
 
 /** Devuelve el plantel fijo (11 nombres + posición) de un club, generándolo
@@ -363,7 +392,7 @@ function getClubSquad(state, club) {
  * resumen. Es solo flavor de esa ventana: no se persiste como parte de las
  * estadísticas de carrera, pero la identidad de los planteles sí (ver
  * getClubSquad). */
-function attachMatchLineups(state, opp, result, includeUser, subOffMinute = null) {
+function attachMatchLineups(state, opp, result, includeUser, subOffMinute = null, subOnMinute = null) {
   const homeSquad = getClubSquad(state, state.club);
   const awaySquad = getClubSquad(state, opp);
   const userEntry = includeUser
@@ -374,6 +403,7 @@ function attachMatchLineups(state, opp, result, includeUser, subOffMinute = null
         goals: result.goals,
         assists: result.assists,
         subOffMinute,
+        subOnMinute,
       }
     : null;
   const home = ratePerformance({
@@ -427,23 +457,61 @@ export function playNextMatch(state, decisions = {}) {
     const reason = wasSuspended ? 'cumples sanción por la expulsión, no puedes jugar' : 'sigues de baja, no viajas con el plantel';
     push(`J${m + 1}: ${reason} (${state.club.name} ${r.teamGoals}-${r.oppGoals} ${opp.name}).`, 'negative');
   } else {
+    // ---- Banco: si el DT te dejó afuera este partido (rollBenchChallenge),
+    // cómo te lo tomaste decide tus chances de entrar y de aprovecharlo. ----
+    let benchFactor = 1;
+    let readinessBonus = 0;
+    let comeOnMinute = null;
+    let playedAtAll = true;
+    if (ps.pendingBenchStart) {
+      const opt = BENCH_CHALLENGE_OPTIONS[decisions.benchChallengeChoiceIndex] ?? BENCH_CHALLENGE_OPTIONS[1];
+      readinessBonus = opt.readinessD || 0;
+      if (opt.managerD) state.managerRelationship = clamp(state.managerRelationship + opt.managerD);
+      const comeOnChance = Math.max(0.15, Math.min(0.85, 0.55 + readinessBonus / 150));
+      if (rng.chance(comeOnChance)) {
+        comeOnMinute = rng.int(55, 85);
+        benchFactor = (90 - comeOnMinute) / 90;
+      } else {
+        playedAtAll = false;
+      }
+    }
+    ps.pendingBenchStart = false;
+
+    if (!playedAtAll) {
+      const r = simulateTeamMatch(state.club.rating, opp.rating, rng);
+      updateTableStats(ps.tableStats, state.club.id, opp.id, r.teamGoals, r.oppGoals);
+      attachMatchLineups(state, opp, r, false);
+      push(`J${m + 1}: te quedás en el banco todo el partido (${state.club.name} ${r.teamGoals}-${r.oppGoals} ${opp.name}).`, 'negative');
+      ps.matchIndex++;
+      state.leagueTable = buildLiveLeagueTable(state, ps);
+      flushFeed(state, feed);
+      return feed;
+    }
+
     const isLateSeason = m >= ps.matchesInSeason - 3;
     const matchCtx = {
       highPressure: isLateSeason && rng.chance(0.45),
       competition: ps.leagueSystem.leagueName,
       fatigue: Math.min(1, m / ps.matchesInSeason),
+      benchFactor,
+      readinessBonus,
     };
     const penaltyChoice = ps.pendingPenalty ? decisions.penaltyChoice || 'medio' : null;
     const result = simulateMatch(state.player, state.club.rating, opp.rating, rng, matchCtx, state.rareTracker, penaltyChoice);
     ps.pendingPenalty = false;
     updateTableStats(ps.tableStats, state.club.id, opp.id, result.teamGoals, result.oppGoals);
 
+    if (comeOnMinute != null) {
+      push(`🔄 Entrás de cambio en el minuto ${comeOnMinute}.`, 'event');
+    }
+
     // ---- Sustitución: si el partido va mal, el DT te puede sacar antes de
     // tiempo (se decide acá, antes de armar la alineación, para poder
-    // marcar el minuto exacto en la ficha del partido). Cómo reaccionás
-    // (reclamo/calma) se resuelve aparte, con resolveSubReaction. ----
+    // marcar el minuto exacto en la ficha del partido). No aplica si ya
+    // entraste de cambio este mismo partido. Cómo reaccionás (reclamo/
+    // calma) se resuelve aparte, con resolveSubReaction. ----
     let subOffMinute = null;
-    if (!result.red && !result.inZona) {
+    if (comeOnMinute == null && !result.red && !result.inZona) {
       const subProb = result.matchRating <= 5.6 ? 0.32 : result.matchRating <= 6.6 ? 0.1 : 0.02;
       if (rng.chance(subProb)) {
         subOffMinute = rng.int(55, 88);
@@ -451,7 +519,7 @@ export function playNextMatch(state, decisions = {}) {
       }
     }
 
-    attachMatchLineups(state, opp, result, true, subOffMinute);
+    attachMatchLineups(state, opp, result, true, subOffMinute, comeOnMinute);
 
     ps.seasonStats.matches++;
     ps.seasonStats.goals += result.goals;
@@ -823,6 +891,7 @@ export function simulateSeason(state, decisions = {}) {
   const feed = [];
   feed.push(...startSeason(state, decisions));
   while (isMatchdayPending(state)) {
+    rollBenchChallenge(state);
     rollPenaltyOpportunityForMatch(state);
     feed.push(...playNextMatch(state, decisions));
     if (hasPendingSubReaction(state)) {

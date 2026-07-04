@@ -76,7 +76,12 @@ export function rollRedCardType(rng) {
 }
 
 /**
- * Simula un partido de club/selección. matchCtx: { highPressure, competition, isFinal }
+ * Simula un partido de club/selección. matchCtx: { highPressure, competition,
+ * isFinal, benchFactor, readinessBonus }. benchFactor (0-1, default 1): si
+ * entrás de cambio, la fracción de minutos que jugaste, así tus chances de
+ * gol/asistencia/tarjeta/lesión se ajustan a los minutos reales en cancha.
+ * readinessBonus: cómo te preparaste mentalmente para tu chance desde el
+ * banco (ver rollBenchChallenge en season.js), sube o baja tu efectividad.
  * penaltyChoice: id de PENALTY_CHOICES si esta jugada incluye un penal a favor.
  * Devuelve un resultado completo con estadísticas del jugador y eventos narrativos.
  */
@@ -84,6 +89,9 @@ export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {},
   const diff = teamRating - oppRating;
   let teamGoals = Math.max(0, poissonSample(rng, 1.35 + diff / 22));
   const oppGoals = Math.max(0, poissonSample(rng, 1.35 - diff / 22));
+
+  const benchFactor = matchCtx.benchFactor ?? 1;
+  const readinessBonus = matchCtx.readinessBonus || 0;
 
   const rating = overallRating(player);
   const relativeQuality = Math.max(-0.5, Math.min(0.9, (rating - teamRating) / 35));
@@ -96,11 +104,11 @@ export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {},
 
   const formFactor = 0.55 + (player.form / 100) * 0.75;
   const moraleFactor = 0.85 + (player.morale / 100) * 0.3;
-  let effectiveness = formFactor * moraleFactor * (1 + relativeQuality) * (inZona ? 1.4 : 1);
+  let effectiveness = formFactor * moraleFactor * (1 + relativeQuality) * (inZona ? 1.4 : 1) * (1 + readinessBonus / 150);
   effectiveness = Math.max(0.15, effectiveness);
 
-  const goalLambda = teamGoals * (GOAL_BIAS[player.position] || 0.1) * effectiveness * 0.55;
-  const assistLambda = teamGoals * (ASSIST_BIAS[player.position] || 0.1) * effectiveness * 0.55;
+  const goalLambda = teamGoals * (GOAL_BIAS[player.position] || 0.1) * effectiveness * 0.55 * benchFactor;
+  const assistLambda = teamGoals * (ASSIST_BIAS[player.position] || 0.1) * effectiveness * 0.55 * benchFactor;
 
   let goals = Math.min(teamGoals + 1, poissonSample(rng, goalLambda));
   const assists = Math.min(4, poissonSample(rng, assistLambda));
@@ -141,7 +149,7 @@ export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {},
   base += rng.gaussian(0, 0.5);
   const matchRating = Math.max(3.2, Math.min(10, Math.round(base * 10) / 10));
 
-  const fatigue = matchCtx.fatigue || 0;
+  const fatigue = (matchCtx.fatigue || 0) * benchFactor;
   const injury = rollInjury(player, rng, fatigue);
 
   const events = rollMatchEvents(player, rng, {
@@ -153,7 +161,7 @@ export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {},
     missedPenalty,
   });
 
-  const red = rng.chance(0.012);
+  const red = rng.chance(0.012 * benchFactor);
   const redCardType = red ? rollRedCardType(rng) : null;
 
   return {
@@ -169,7 +177,7 @@ export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {},
     pressurePenaltyMiss,
     injury,
     events,
-    yellow: rng.chance(0.16),
+    yellow: rng.chance(0.16 * benchFactor),
     red,
     redCardType,
   };

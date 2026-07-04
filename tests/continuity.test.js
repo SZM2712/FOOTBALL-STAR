@@ -2,7 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Rng } from '../src/state/rng.js';
 import { createGame, finishChildhood } from '../src/state/gameState.js';
-import { startSeason, playNextMatch, finishSeason, rollManagerTalk, MANAGER_TALK_OPTIONS } from '../src/engine/season.js';
+import {
+  startSeason,
+  playNextMatch,
+  finishSeason,
+  rollManagerTalk,
+  MANAGER_TALK_OPTIONS,
+  rollBenchChallenge,
+  BENCH_CHALLENGE_OPTIONS,
+} from '../src/engine/season.js';
 import { acceptOffer } from '../src/engine/transferMarket.js';
 import { checkChildProDebut } from '../src/engine/personalLife.js';
 import { rollUnderperformerTalk, startCoachCareer } from '../src/engine/coachCareer.js';
@@ -133,6 +141,77 @@ test('checkChildProDebut hace debutar a un hijo con talento que sigue tus pasos 
     }
   }
   assert.ok(debuted, 'un hijo con talento, buen vínculo y que sigue el fútbol debería poder debutar en 60 intentos');
+});
+
+test('BENCH_CHALLENGE_OPTIONS ofrece opciones con efectos distintos en la disposición', () => {
+  assert.ok(BENCH_CHALLENGE_OPTIONS.length >= 2);
+  const readinessDs = BENCH_CHALLENGE_OPTIONS.map((o) => o.readinessD || 0);
+  assert.ok(readinessDs.some((d) => d > 0));
+  assert.ok(readinessDs.some((d) => d < 0));
+});
+
+test('rollBenchChallenge nunca dispara si estás lesionado o suspendido', () => {
+  const state = createGame('bench-1');
+  playChildhood(state);
+  startSeason(state, basicDecisions);
+  state.pendingSeason.weeksOut = 4;
+  for (let i = 0; i < 30; i++) {
+    assert.equal(rollBenchChallenge(state), null);
+  }
+});
+
+test('rollBenchChallenge puede dispararse, más seguido cuanto peor la relación con el DT', () => {
+  const state = createGame('bench-2');
+  playChildhood(state);
+  startSeason(state, basicDecisions);
+  state.managerRelationship = 10;
+  let triggered = false;
+  for (let i = 0; i < 60 && !triggered; i++) {
+    const challenge = rollBenchChallenge(state);
+    if (challenge) {
+      triggered = true;
+      assert.ok(typeof challenge.text === 'string' && challenge.text.length > 0);
+      assert.equal(state.pendingSeason.pendingBenchStart, true);
+    }
+  }
+  assert.ok(triggered, 'con relación muy mala, el banco debería poder dispararse en 60 intentos');
+});
+
+test('si te dejan en el banco, según cómo respondas podés no entrar o entrar y jugar bien', () => {
+  const state = createGame('bench-3');
+  playChildhood(state);
+  startSeason(state, basicDecisions);
+
+  let sawComeOn = false;
+  let sawStayedOut = false;
+  for (let i = 0; i < 60 && (!sawComeOn || !sawStayedOut); i++) {
+    if (!state.pendingSeason || state.pendingSeason.matchIndex >= state.pendingSeason.matchesInSeason) break;
+    state.pendingSeason.pendingBenchStart = true;
+    const before = state.pendingSeason.seasonStats.matches;
+    playNextMatch(state, { benchChallengeChoiceIndex: 0 });
+    const played = state.pendingSeason.seasonStats.matches > before;
+    if (played) {
+      sawComeOn = true;
+      const mine = state.lastMatchLineups.home.players.find((p) => p.isUser);
+      assert.ok(mine, 'si entraste de cambio, tu ficha debe aparecer en la alineación');
+      assert.equal(mine.subOn, true);
+    } else {
+      sawStayedOut = true;
+    }
+  }
+  assert.ok(sawComeOn, 'en varios intentos, alguna vez debería tocarte entrar de cambio');
+  assert.ok(sawStayedOut, 'en varios intentos, alguna vez debería tocarte quedarte en el banco');
+});
+
+test('reclamarle al entrenador por estar en el banco empeora la relación con él', () => {
+  const state = createGame('bench-4');
+  playChildhood(state);
+  startSeason(state, basicDecisions);
+  state.managerRelationship = 55;
+  state.pendingSeason.pendingBenchStart = true;
+  const reclamarIdx = BENCH_CHALLENGE_OPTIONS.findIndex((o) => (o.managerD || 0) < 0);
+  playNextMatch(state, { benchChallengeChoiceIndex: reclamarIdx });
+  assert.ok(state.managerRelationship < 55, 'reclamar por no ser titular debería resentir la relación con el DT');
 });
 
 test('checkChildProDebut no hace nada si el hijo no tiene talento o no sigue el fútbol', () => {

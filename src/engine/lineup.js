@@ -43,6 +43,8 @@ function baseRatingFor(position, teamGoals, oppGoals, rng) {
   return Math.max(4.0, Math.min(9.3, Math.round(base * 10) / 10));
 }
 
+const POSITION_ORDER = { POR: 0, DEF: 1, MED: 2, DEL: 3 };
+
 /**
  * A partir del plantel fijo de un club (su identidad no cambia), calcula la
  * calificación/goles/asistencias/cambios de ESTE partido puntual, coherentes
@@ -54,9 +56,10 @@ function baseRatingFor(position, teamGoals, oppGoals, rng) {
  * Si se pasa `userEntry`, reemplaza al jugador de esa posición por sus
  * stats reales (el jugador que controla el usuario no se duplica, y
  * siempre es el mismo puesto del plantel el que se superpone con él). Si
- * `userEntry.subOffMinute` está definido, el usuario sale sustituido a ese
- * minuto y entra un suplente del banco en su lugar, igual que a cualquier
- * otro titular.
+ * `userEntry.subOffMinute` está definido, el usuario arranca titular y sale
+ * sustituido a ese minuto. Si `userEntry.subOnMinute` está definido, el
+ * usuario arranca en el banco y entra de cambio a ese minuto, reemplazando
+ * a un titular como cualquier otro suplente.
  */
 export function ratePerformance({ squad, rng, teamGoals, oppGoals, ownGoals = 0, ownAssists = 0, userEntry = null }) {
   const starters = squad.filter((p) => p.starter);
@@ -72,7 +75,7 @@ export function ratePerformance({ squad, rng, teamGoals, oppGoals, ownGoals = 0,
   }));
 
   let userIdx = -1;
-  if (userEntry) {
+  if (userEntry && !userEntry.subOnMinute) {
     const idx = lineup.findIndex((p) => p.position === userEntry.position);
     userIdx = idx >= 0 ? idx : 0;
     lineup[userIdx] = {
@@ -89,28 +92,47 @@ export function ratePerformance({ squad, rng, teamGoals, oppGoals, ownGoals = 0,
   // ---- Cambios: hasta 3 por equipo, más el del usuario si corresponde ----
   let benchIdx = 0;
   const subbedOffIdx = new Set();
-  function substitute(outIdx, minute) {
-    if (benchIdx >= bench.length) return;
-    const sub = bench[benchIdx++];
+  function substitute(outIdx, minute, replacement = null) {
+    if (!replacement && benchIdx >= bench.length) return;
+    const sub = replacement || bench[benchIdx++];
     lineup[outIdx].subOff = true;
     lineup[outIdx].subOffMinute = minute;
     lineup[outIdx].minutesFraction = minute / 90;
     lineup.push({
       name: sub.name,
       position: sub.position,
-      rating: Math.max(5.5, Math.min(8.0, 6.0 + (baseRatingFor(sub.position, teamGoals, oppGoals, rng) - 6.0) * 0.5)),
-      goals: 0,
-      assists: 0,
+      rating:
+        sub.rating != null ? sub.rating : Math.max(5.5, Math.min(8.0, 6.0 + (baseRatingFor(sub.position, teamGoals, oppGoals, rng) - 6.0) * 0.5)),
+      goals: sub.goals || 0,
+      assists: sub.assists || 0,
+      isUser: !!sub.isUser,
       subOn: true,
       subOnMinute: minute,
       replaced: lineup[outIdx].name,
       minutesFraction: (90 - minute) / 90,
     });
     subbedOffIdx.add(outIdx);
+    return lineup.length - 1;
   }
 
   if (userEntry && userEntry.subOffMinute) {
     substitute(userIdx, userEntry.subOffMinute);
+  } else if (userEntry && userEntry.subOnMinute) {
+    // El usuario arranca en el banco: sale el titular peor calificado (que
+    // no sea el arquero) y entra el usuario en su lugar, al minuto ya
+    // decidido en season.js (rollBenchChallenge + resolución en playNextMatch).
+    const eligible = lineup.map((p, idx) => ({ idx, p })).filter(({ p }) => p.position !== 'POR');
+    if (eligible.length) {
+      eligible.sort((a, b) => a.p.rating - b.p.rating);
+      userIdx = substitute(eligible[0].idx, userEntry.subOnMinute, {
+        name: userEntry.name,
+        position: userEntry.position,
+        rating: userEntry.rating,
+        goals: userEntry.goals,
+        assists: userEntry.assists,
+        isUser: true,
+      });
+    }
   }
 
   let plannedSubs = 0;
@@ -160,6 +182,13 @@ export function ratePerformance({ squad, rng, teamGoals, oppGoals, ownGoals = 0,
   }
 
   for (const p of lineup) delete p.minutesFraction;
-  lineup.sort((a, b) => b.rating - a.rating);
+  // Orden de formación (arquero a delantero), no por calificación: los
+  // titulares primero en su orden natural, los suplentes al final en el
+  // orden en que entraron.
+  lineup.sort((a, b) => {
+    if (!!a.subOn !== !!b.subOn) return a.subOn ? 1 : -1;
+    if (a.subOn && b.subOn) return a.subOnMinute - b.subOnMinute;
+    return POSITION_ORDER[a.position] - POSITION_ORDER[b.position];
+  });
   return lineup;
 }

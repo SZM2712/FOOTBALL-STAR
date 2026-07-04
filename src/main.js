@@ -8,6 +8,8 @@ import {
   rollManagerTalk,
   MANAGER_TALK_OPTIONS,
   rollPenaltyOpportunityForMatch,
+  rollBenchChallenge,
+  BENCH_CHALLENGE_OPTIONS,
   hasPendingSubReaction,
   resolveSubReaction,
   SUB_REACTIONS,
@@ -1024,6 +1026,16 @@ async function handlePlayNextMatch() {
   busy = true;
   render();
 
+  const benchChallenge = rollBenchChallenge(game);
+  let benchChallengeChoiceIndex = null;
+  if (benchChallenge) {
+    benchChallengeChoiceIndex = await showModal({
+      title: `Te dejan en el banco`,
+      desc: benchChallenge.text,
+      options: BENCH_CHALLENGE_OPTIONS.map((o, i) => ({ label: o.label, value: i })),
+    });
+  }
+
   const hasPenalty = rollPenaltyOpportunityForMatch(game);
   let penaltyChoice = null;
   if (hasPenalty) {
@@ -1034,7 +1046,7 @@ async function handlePlayNextMatch() {
     });
   }
 
-  const feedEntries = playNextMatch(game, { penaltyChoice });
+  const feedEntries = playNextMatch(game, { penaltyChoice, benchChallengeChoiceIndex });
   busy = false;
   render();
 
@@ -1058,8 +1070,9 @@ async function handleSimRestOfSeason() {
   render();
   let allFeed = [];
   while (isMatchdayPending(game)) {
+    rollBenchChallenge(game);
     rollPenaltyOpportunityForMatch(game);
-    allFeed = allFeed.concat(playNextMatch(game, { penaltyChoice: 'medio' }));
+    allFeed = allFeed.concat(playNextMatch(game, { penaltyChoice: 'medio', benchChallengeChoiceIndex: 1 }));
     if (hasPendingSubReaction(game)) {
       allFeed = allFeed.concat(resolveSubReaction(game, 'calma'));
     }

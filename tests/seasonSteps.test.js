@@ -1,7 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGame, finishChildhood } from '../src/state/gameState.js';
-import { startSeason, playNextMatch, finishSeason, isMatchdayPending, simulateSeason, rollPenaltyOpportunityForMatch } from '../src/engine/season.js';
+import {
+  startSeason,
+  playNextMatch,
+  finishSeason,
+  isMatchdayPending,
+  simulateSeason,
+  rollPenaltyOpportunityForMatch,
+  rollBenchChallenge,
+  hasPendingSubReaction,
+  resolveSubReaction,
+} from '../src/engine/season.js';
 import { CHILDHOOD_STAGES, optionsForStage, advanceChildhoodStage } from '../src/engine/childhood.js';
 
 function playChildhood(state) {
@@ -71,8 +81,12 @@ test('simulateSeason (wrapper de compatibilidad) produce el mismo resultado fina
   playChildhood(stateB);
   startSeason(stateB, basicDecisions);
   while (isMatchdayPending(stateB)) {
+    rollBenchChallenge(stateB);
     rollPenaltyOpportunityForMatch(stateB);
     playNextMatch(stateB, basicDecisions);
+    if (hasPendingSubReaction(stateB)) {
+      resolveSubReaction(stateB, 'calma');
+    }
   }
   finishSeason(stateB, basicDecisions);
 
