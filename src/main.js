@@ -1,0 +1,572 @@
+import { createGame, serializeGame, deserializeGame } from './state/gameState.js';
+import { simulateSeason, rollPressConferenceQuestion } from './engine/season.js';
+import { rollNationalizationOpportunity } from './engine/nationalTeam.js';
+import { HOBBIES, TRAVEL_OPTIONS, buyLuxury } from './engine/personalLife.js';
+import { acceptOffer, rejectOffer, AGENT_TIERS, generateSponsorships } from './engine/transferMarket.js';
+import { collectSponsorships } from './engine/finance.js';
+import { overallRating, POSITION_LABELS } from './engine/player.js';
+import { computeLegacy, buildCareerSummary } from './engine/legacy.js';
+import { RARE_STATE_DEFS } from './engine/rareStates.js';
+import { COUNTRY_BY_CODE } from './data/countries.js';
+import { showModal, showInfoModal, escapeHtml } from './ui/modal.js';
+import { renderPlayerCard } from './ui/components/playerCard.js';
+import { renderAttributeBars } from './ui/components/attributeBars.js';
+import { renderFeed } from './ui/components/feed.js';
+
+let game = null;
+let activeTab = 'diario';
+let busy = false;
+
+const app = document.getElementById('app');
+
+function fmtMoney(m) {
+  if (m == null || Number.isNaN(m)) return '€0';
+  if (Math.abs(m) >= 1) return `€${m.toFixed(1)}M`;
+  return `€${Math.max(0, Math.round(m * 1000))}k`;
+}
+
+function render() {
+  if (!game) {
+    app.innerHTML = renderCreationScreen();
+    attachCreationHandlers();
+    return;
+  }
+  if (game.retired) {
+    app.innerHTML = renderRetirementScreen(game);
+    attachRetirementHandlers();
+    return;
+  }
+  app.innerHTML = renderGameShell();
+  attachGameHandlers();
+}
+
+// ---------------------------------------------------------------------------
+// Creación
+// ---------------------------------------------------------------------------
+function renderCreationScreen() {
+  return `
+    <div class="screen">
+      <div class="hero">
+        <div class="emoji">⚽</div>
+        <h1>LEYENDA</h1>
+        <p>Simulador de carrera futbolística. Naces en cualquier país del mundo.<br/>Tu destino: llegar lo más lejos posible.</p>
+      </div>
+      <div class="card col">
+        <h3>Nueva carrera</h3>
+        <div class="field">
+          <label for="seed-input">Semilla (opcional, para compartir carreras)</label>
+          <input id="seed-input" type="text" placeholder="Déjalo vacío para una semilla aleatoria" maxlength="24" />
+        </div>
+        <button class="btn primary block" data-new-game>Nacer y empezar</button>
+      </div>
+      <div class="card col">
+        <h3>Cargar partida</h3>
+        <p>¿Ya tenías una carrera en marcha? Carga tu archivo .json exportado.</p>
+        <input type="file" accept="application/json" data-load-file />
+      </div>
+    </div>
+  `;
+}
+
+function attachCreationHandlers() {
+  app.querySelector('[data-new-game]').addEventListener('click', () => {
+    const seedInput = app.querySelector('#seed-input').value.trim();
+    game = createGame(seedInput || undefined);
+    activeTab = 'diario';
+    render();
+  });
+  app.querySelector('[data-load-file]').addEventListener('change', async (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      game = deserializeGame(text);
+      activeTab = 'diario';
+      render();
+    } catch (e) {
+      alert('No se pudo leer el archivo de partida. ¿Seguro que es un JSON válido de LEYENDA?');
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Shell del juego (topbar + tabs + contenido)
+// ---------------------------------------------------------------------------
+function renderGameShell() {
+  const tabs = [
+    ['diario', 'Diario'],
+    ['mercado', 'Mercado'],
+    ['seleccion', 'Selección'],
+    ['vida', 'Vida'],
+    ['palmares', 'Palmarés'],
+    ['ajustes', 'Ajustes'],
+  ];
+  return `
+    <div class="topbar">
+      <div class="stat"><span class="flag">${game.country.flag}</span><b>${game.player.age}a</b></div>
+      <div class="stat">💰<b>${fmtMoney(game.money)}</b></div>
+      <div class="stat">🌟<b>${Math.round(game.fame)}</b></div>
+      <div class="stat">🏆<b>${game.trophies.length}</b></div>
+      <div class="stat">🗓️<b>${game.worldYearStart + game.year - 1}</b></div>
+    </div>
+    <div class="tabbar">
+      ${tabs.map(([id, label]) => `<button class="tab ${activeTab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('')}
+    </div>
+    <div class="screen" data-tab-content>
+      ${renderTabContent()}
+    </div>
+    ${activeTab !== 'ajustes' ? `<div class="advance-bar"><button class="btn primary advance-btn" data-advance-year ${busy ? 'disabled' : ''}>Avanzar año ▶</button></div>` : ''}
+  `;
+}
+
+function renderTabContent() {
+  switch (activeTab) {
+    case 'diario':
+      return renderDiarioTab();
+    case 'mercado':
+      return renderMercadoTab();
+    case 'seleccion':
+      return renderSeleccionTab();
+    case 'vida':
+      return renderVidaTab();
+    case 'palmares':
+      return renderPalmaresTab();
+    case 'ajustes':
+      return renderAjustesTab();
+    default:
+      return '';
+  }
+}
+
+function renderDiarioTab() {
+  return `
+    ${renderPlayerCard(game)}
+    <div class="card">
+      <h3>Atributos</h3>
+      ${renderAttributeBars(game.player)}
+    </div>
+    <div class="card">
+      <h3>Diario</h3>
+      ${renderFeed(game.feed)}
+    </div>
+  `;
+}
+
+function renderMercadoTab() {
+  const offers = game.currentOffers || [];
+  return `
+    <div class="card">
+      <h3>Tu club actual</h3>
+      <div class="row between">
+        <div>
+          <div style="font-weight:700">${escapeHtml(game.club.name)}</div>
+          <div class="muted">${escapeHtml(game.club.leagueName)} · Rating ${game.club.rating}</div>
+        </div>
+        <div class="pill accent">${fmtMoney(game.contract.salaryM)}/año</div>
+      </div>
+      <p class="muted" style="margin-top:6px">Contrato: ${game.contract.years} años · Cláusula ${fmtMoney(game.contract.clauseM)}</p>
+    </div>
+    <div class="card">
+      <h3>Agente</h3>
+      <div class="scroll-x">
+        ${Object.entries(AGENT_TIERS)
+          .map(
+            ([id, t]) => `
+          <button class="btn ${game.agent.tier === id ? 'primary' : ''}" data-agent="${id}" style="flex:1">
+            ${t.label}<br/><span class="muted" style="font-size:11px">Comisión ${(t.commission * 100).toFixed(0)}%</span>
+          </button>`
+          )
+          .join('')}
+      </div>
+    </div>
+    <div class="card">
+      <h3>Ofertas de fichaje</h3>
+      ${
+        offers.length
+          ? offers
+              .map(
+                (o) => `
+        <div class="card" style="margin-bottom:8px">
+          <div class="row between">
+            <div>
+              <div style="font-weight:700">${escapeHtml(o.club.name)} ${o.isGiant ? '<span class="pill gold">Gigante</span>' : ''} ${o.isExotic ? '<span class="pill purple">Exótico</span>' : ''}</div>
+              <div class="muted">${escapeHtml(o.league)} · Rating ${o.club.rating}</div>
+              <div class="muted">Salario ${fmtMoney(o.wageM)}/año · Fee ${fmtMoney(o.feeM)} · ${o.years} años</div>
+            </div>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button class="btn primary" data-accept-offer="${o.id}" style="flex:1">Aceptar</button>
+            <button class="btn" data-reject-offer="${o.id}" style="flex:1">Rechazar</button>
+          </div>
+        </div>`
+              )
+              .join('')
+          : '<p class="muted">No tienes ofertas este año.</p>'
+      }
+    </div>
+    <div class="card">
+      <h3>Patrocinios</h3>
+      ${renderSponsorships()}
+    </div>
+  `;
+}
+
+function renderSponsorships() {
+  const offers = generateSponsorships(game);
+  if (!offers.length) return '<p class="muted">Necesitas más fama para atraer patrocinadores.</p>';
+  return offers
+    .map(
+      (o) => `
+    <div class="row between" style="margin-bottom:6px">
+      <div>${escapeHtml(o.name)}</div>
+      <button class="btn accent" data-sponsor="${o.id}">Firmar (${fmtMoney(o.payM)})</button>
+    </div>`
+    )
+    .join('');
+}
+
+function renderSeleccionTab() {
+  const country = COUNTRY_BY_CODE[game.nationality];
+  const nt = game.nationalTeam;
+  return `
+    <div class="card">
+      <h3>Selección nacional</h3>
+      <div class="row" style="gap:14px">
+        <div class="flag" style="font-size:36px">${country.flag}</div>
+        <div>
+          <div style="font-weight:700">${country.name}</div>
+          <div class="muted">Fuerza de la selección: ${country.nt}/100</div>
+        </div>
+      </div>
+      <div class="grid2" style="margin-top:12px">
+        <div class="stat-tile"><div class="n">${nt.caps}</div><div class="l">Partidos</div></div>
+        <div class="stat-tile"><div class="n">${nt.goals}</div><div class="l">Goles</div></div>
+      </div>
+      ${nt.prestigeLocked ? '<p class="muted" style="margin-top:8px">Tu contrato como Mercenario de Oro te cerró las puertas de la selección.</p>' : ''}
+    </div>
+    <div class="card">
+      <h3>Torneos disputados</h3>
+      ${
+        nt.tournamentsPlayed.length
+          ? nt.tournamentsPlayed
+              .map((t) => `<div class="row between"><span>${escapeHtml(t.name)} (${t.year})</span><span class="pill ${t.champion ? 'gold' : ''}">${t.champion ? 'Campeón' : t.reached}</span></div>`)
+              .join('')
+          : '<p class="muted">Todavía no has disputado ningún torneo internacional.</p>'
+      }
+    </div>
+  `;
+}
+
+function renderVidaTab() {
+  const pl = game.personalLife;
+  return `
+    <div class="card">
+      <h3>Familia</h3>
+      <p>${pl.family.father.alive ? '👨' : '🕊️'} Tu padre es ${escapeHtml(pl.family.father.archetype.text)}.</p>
+      <p>${pl.family.mother.alive ? '👩' : '🕊️'} Tu madre es ${escapeHtml(pl.family.mother.archetype.text)}.</p>
+    </div>
+    <div class="card">
+      <h3>Pareja e hijos</h3>
+      <p>${pl.partner ? `En pareja con ${escapeHtml(pl.partner.name)}${pl.married ? ' (casados)' : ''}.` : 'Actualmente soltero/a.'}</p>
+      <p>${pl.children.length ? `Hijos: ${pl.children.map((c) => escapeHtml(c.name)).join(', ')}` : 'Sin hijos por ahora.'}</p>
+    </div>
+    <div class="card">
+      <h3>Vicios y reputación</h3>
+      <div class="attr-row"><div class="label">Alcohol</div><div class="attr-bar"><span style="width:${pl.vices.alcohol}%"></span></div><div class="val">${pl.vices.alcohol}</div></div>
+      <div class="attr-row"><div class="label">Apuestas</div><div class="attr-bar"><span style="width:${pl.vices.gambling}%"></span></div><div class="val">${pl.vices.gambling}</div></div>
+      <div class="attr-row"><div class="label">Reputación</div><div class="attr-bar"><span style="width:${pl.reputation}%"></span></div><div class="val">${pl.reputation}</div></div>
+      ${pl.vices.addiction ? `<p class="muted" style="color:var(--danger)">Adicción activa: ${escapeHtml(pl.vices.addiction)}.</p>` : ''}
+      ${pl.vices.recovered ? '<p class="muted" style="color:var(--accent)">Historia de redención: superaste tu adicción.</p>' : ''}
+    </div>
+    <div class="card">
+      <h3>Compras de lujo</h3>
+      <div class="row wrap">
+        <button class="btn" data-buy="casa">Comprar mansión (€4M)</button>
+        <button class="btn" data-buy="auto">Auto de lujo (€1.2M)</button>
+        <button class="btn" data-buy="clubAmateur">Club de tu pueblo (€2.5M)</button>
+      </div>
+      ${pl.purchases.length ? `<p class="muted" style="margin-top:8px">Ya tienes: ${pl.purchases.join(', ')}</p>` : ''}
+    </div>
+  `;
+}
+
+function renderPalmaresTab() {
+  const rareHistory = game.rareTracker.history
+    .map((h) => ({ name: RARE_STATE_DEFS[h.id]?.name, year: h.startedYear }))
+    .concat(game.rareTracker.active ? [{ name: RARE_STATE_DEFS[game.rareTracker.active.id]?.name + ' (activo)', year: game.rareTracker.active.startedYear }] : []);
+  return `
+    <div class="card">
+      <h3>Trofeos (${game.trophies.length})</h3>
+      ${
+        game.trophies.length
+          ? game.trophies.map((t) => `<div class="row between"><span>${escapeHtml(t.name)}</span><span class="muted">${t.withClub} · ${t.year}</span></div>`).join('')
+          : '<p class="muted">Aún no ganaste nada. El tiempo dirá.</p>'
+      }
+    </div>
+    <div class="card">
+      <h3>Estadísticas de carrera</h3>
+      <div class="grid2">
+        <div class="stat-tile"><div class="n">${game.stats.career.matches}</div><div class="l">Partidos</div></div>
+        <div class="stat-tile"><div class="n">${game.stats.career.goals}</div><div class="l">Goles</div></div>
+        <div class="stat-tile"><div class="n">${game.stats.career.assists}</div><div class="l">Asistencias</div></div>
+        <div class="stat-tile"><div class="n">${game.rareTracker.legendaryNights}</div><div class="l">Noches de Leyenda</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Estados raros vividos</h3>
+      ${rareHistory.length ? rareHistory.map((h) => `<div class="row between"><span>${escapeHtml(h.name || '')}</span><span class="muted">año ${h.year}</span></div>`).join('') : '<p class="muted">Ninguno todavía.</p>'}
+    </div>
+  `;
+}
+
+function renderAjustesTab() {
+  return `
+    <div class="card">
+      <h3>Guardar partida</h3>
+      <p>Semilla: <b>${escapeHtml(game.seed)}</b></p>
+      <button class="btn primary block" data-export>Descargar partida (.json)</button>
+    </div>
+    <div class="card">
+      <h3>Cargar otra partida</h3>
+      <input type="file" accept="application/json" data-load-file2 />
+    </div>
+    <div class="card">
+      <h3>Peligro</h3>
+      <button class="btn danger block" data-restart>Abandonar carrera y empezar de nuevo</button>
+    </div>
+  `;
+}
+
+function attachGameHandlers() {
+  app.querySelectorAll('[data-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activeTab = btn.getAttribute('data-tab');
+      render();
+    });
+  });
+
+  const advanceBtn = app.querySelector('[data-advance-year]');
+  if (advanceBtn) advanceBtn.addEventListener('click', handleAdvanceYear);
+
+  app.querySelectorAll('[data-agent]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      game.agent.tier = btn.getAttribute('data-agent');
+      render();
+    });
+  });
+
+  app.querySelectorAll('[data-accept-offer]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-accept-offer');
+      const offer = game.currentOffers.find((o) => o.id === id);
+      if (offer) acceptOffer(game, offer);
+      game.currentOffers = [];
+      render();
+    });
+  });
+  app.querySelectorAll('[data-reject-offer]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-reject-offer');
+      const offer = game.currentOffers.find((o) => o.id === id);
+      if (offer) {
+        rejectOffer(game, offer);
+        game.currentOffers = game.currentOffers.filter((o) => o.id !== id);
+      }
+      render();
+    });
+  });
+
+  app.querySelectorAll('[data-sponsor]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-sponsor');
+      const offers = generateSponsorships(game);
+      collectSponsorships(game, [id], offers);
+      render();
+    });
+  });
+
+  app.querySelectorAll('[data-buy]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      buyLuxury(game, btn.getAttribute('data-buy'));
+      render();
+    });
+  });
+
+  const exportBtn = app.querySelector('[data-export]');
+  if (exportBtn) exportBtn.addEventListener('click', exportGame);
+
+  const loadFile2 = app.querySelector('[data-load-file2]');
+  if (loadFile2) {
+    loadFile2.addEventListener('change', async (ev) => {
+      const file = ev.target.files[0];
+      if (!file) return;
+      const text = await file.text();
+      game = deserializeGame(text);
+      activeTab = 'diario';
+      render();
+    });
+  }
+
+  const restartBtn = app.querySelector('[data-restart]');
+  if (restartBtn) {
+    restartBtn.addEventListener('click', () => {
+      if (confirm('¿Seguro que quieres abandonar esta carrera? Se perderá si no la exportaste.')) {
+        game = null;
+        render();
+      }
+    });
+  }
+}
+
+function exportGame() {
+  const json = serializeGame(game);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `leyenda-${game.seed}-${game.player.age}anos.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------------------
+// Flujo de "Avanzar año"
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Retiro y legado
+// ---------------------------------------------------------------------------
+function renderRetirementScreen(state) {
+  const legacy = computeLegacy(state);
+  const summary = buildCareerSummary(state);
+  const isDark = /Talento que Pudo Ser|Ruina|Expulsado/.test(legacy.title);
+  return `
+    <div class="screen">
+      <div class="rare-banner ${isDark ? 'negative' : ''}" style="margin-top:20px">
+        <div class="title">${escapeHtml(legacy.title)}</div>
+        <div class="sub">${escapeHtml(legacy.narrative)}</div>
+      </div>
+      ${renderPlayerCard(state)}
+      <div class="card">
+        <h3>Resumen de carrera</h3>
+        <div class="grid2">
+          <div class="stat-tile"><div class="n">${summary.yearsActive}</div><div class="l">Temporadas</div></div>
+          <div class="stat-tile"><div class="n">${summary.goals}</div><div class="l">Goles</div></div>
+          <div class="stat-tile"><div class="n">${summary.assists}</div><div class="l">Asistencias</div></div>
+          <div class="stat-tile"><div class="n">${summary.trophies.length}</div><div class="l">Títulos</div></div>
+          <div class="stat-tile"><div class="n">${summary.caps}</div><div class="l">Partidos con ${summary.country}</div></div>
+          <div class="stat-tile"><div class="n">${summary.legendaryNights}</div><div class="l">Noches de Leyenda</div></div>
+        </div>
+        <p class="muted" style="margin-top:10px">Clubes: ${summary.clubs.map(escapeHtml).join(', ') || '—'}</p>
+        <p class="muted">Fortuna final: ${fmtMoney(summary.finalMoneyM)}</p>
+      </div>
+      <div class="card">
+        <h3>Estados raros vividos</h3>
+        ${
+          summary.rareStates.length
+            ? summary.rareStates.map((h) => `<div class="row between"><span>${escapeHtml(h.name || '')}</span><span class="muted">año ${h.startedYear} · ${escapeHtml(h.resolution || '')}</span></div>`).join('')
+            : '<p class="muted">Una carrera sin sobresaltos... hasta donde se sabe.</p>'
+        }
+      </div>
+      <div class="card col">
+        <h3>Semilla de esta carrera</h3>
+        <p><b>${escapeHtml(summary.seed)}</b> — compártela para que otros vivan la misma historia.</p>
+        <button class="btn primary block" data-export-final>Descargar historial (.json)</button>
+        <button class="btn block" data-new-career>Empezar una nueva carrera</button>
+      </div>
+    </div>
+  `;
+}
+
+function attachRetirementHandlers() {
+  app.querySelector('[data-export-final]').addEventListener('click', exportGame);
+  app.querySelector('[data-new-career]').addEventListener('click', () => {
+    game = null;
+    render();
+  });
+}
+
+async function handleAdvanceYear() {
+  if (busy || game.retired) return;
+  busy = true;
+  render();
+
+  const decisions = {};
+
+  const nat = rollNationalizationOpportunity(game);
+  if (nat) {
+    decisions.nationalizationOffer = nat;
+    decisions.nationalizationChoice = await showModal({
+      title: 'Oportunidad de nacionalización',
+      desc: `Por ascendencia, podrías representar a ${nat.toCountry.name} en lugar de ${nat.fromCountry.name}. Es tu única oportunidad antes de debutar, y no hay vuelta atrás.`,
+      options: [
+        { label: `Aceptar y jugar para ${nat.toCountry.name}`, value: 'accept' },
+        { label: `Seguir siendo fiel a ${nat.fromCountry.name}`, value: 'reject' },
+      ],
+    });
+  }
+
+  const pressQ = rollPressConferenceQuestion(game);
+  if (pressQ) {
+    decisions.pressQuestion = pressQ;
+    decisions.pressAnswerIndex = await showModal({
+      title: 'Rueda de prensa',
+      desc: pressQ.q,
+      options: pressQ.options.map((o, i) => ({ label: o.label, value: i })),
+    });
+  }
+
+  decisions.training = await showModal({
+    title: 'Entrenamiento',
+    desc: '¿En qué te enfocas esta temporada?',
+    options: [
+      { label: 'Técnico: tiro, pase y regate', value: 'tecnico' },
+      { label: 'Físico: ritmo y potencia', value: 'fisico' },
+      { label: 'Invisible: descanso, nutrición, psicología', value: 'invisible' },
+    ],
+  });
+
+  decisions.hobby = await showModal({
+    title: 'Tiempo libre',
+    desc: '¿A qué dedicas tus ratos libres este año?',
+    options: Object.entries(HOBBIES)
+      .map(([k, v]) => ({ label: v.label, value: k }))
+      .concat([{ label: 'Nada en particular', value: null }]),
+  });
+
+  decisions.travel = await showModal({
+    title: 'Vacaciones de verano',
+    desc: '¿Cómo descansas este verano?',
+    options: Object.entries(TRAVEL_OPTIONS).map(([k, v]) => ({ label: v.label, value: k })),
+  });
+
+  const social = await showModal({
+    title: 'Vida social',
+    desc: '¿Cómo llevas tu vida fuera de la cancha?',
+    options: [
+      { label: 'Vida tranquila, sin excesos', value: { party: 'ninguna', gambling: 'no' } },
+      { label: 'Salidas moderadas con el grupo', value: { party: 'moderada', gambling: 'no' } },
+      { label: 'Noches intensas de fiesta', value: { party: 'intensa', gambling: 'no' } },
+      { label: 'Apuestas en el casino', value: { party: 'ninguna', gambling: 'ocasional' } },
+    ],
+  });
+  decisions.party = social.party;
+  decisions.gambling = social.gambling;
+
+  const before = { rareActive: game.rareTracker.active?.id, retired: game.retired };
+  const feedEntries = simulateSeason(game, decisions);
+  busy = false;
+  render();
+
+  const rareEntries = feedEntries.filter((f) => f.type === 'rare');
+  for (const r of rareEntries) {
+    await showInfoModal({ title: '⭐ Momento especial', text: r.text, rare: true, negative: /Maldición|Cristal|Caída|expulsado|Expulsado/.test(r.text) });
+  }
+
+  if (game.retired) {
+    render();
+  }
+}
+
+render();

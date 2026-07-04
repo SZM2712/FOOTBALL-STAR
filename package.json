@@ -1,0 +1,13 @@
+{
+  "name": "leyenda-football-simulator",
+  "version": "1.0.0",
+  "description": "LEYENDA: Simulador de Carrera Futbolística - juego web estilo BitLife de carrera futbolística",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "simulate": "node scripts/simulate.js",
+    "serve": "node scripts/serve.js"
+  },
+  "license": "MIT"
+}
