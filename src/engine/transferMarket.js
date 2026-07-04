@@ -28,6 +28,23 @@ export function estimateValueM(state) {
   return Math.round(marketValue(state.player, state.fame) * 10) / 10;
 }
 
+/** Rango de tiers de país "creíble" para el nivel actual del jugador. Tier 1
+ * es la élite: un jugador de rating alto debe atraer interés de las ligas
+ * top, no de cualquier país del mundo (bug anterior: la fórmula ampliaba el
+ * rango hacia tiers débiles a medida que subía el rating, permitiendo
+ * ofertas de países como Fiyi para una superestrella). */
+function credibleTierRange(rating) {
+  if (rating >= 85) return [1, 2];
+  if (rating >= 75) return [1, 3];
+  if (rating >= 65) return [2, 4];
+  if (rating >= 55) return [3, 5];
+  return [4, 6];
+}
+
+function closestByRating(clubs, rating) {
+  return clubs.reduce((best, c) => (Math.abs(c.rating - rating) < Math.abs(best.rating - rating) ? c : best), clubs[0]);
+}
+
 /** Decide si el club quiere renovarte cuando el contrato llega a su fin. */
 function renewalChance(player, club, rating) {
   let p = 0.82;
@@ -77,8 +94,9 @@ export function generateOffers(state) {
   const n = rng.int(minN, maxN) + freeAgentBoost;
   const offers = [];
 
+  const [tierLo, tierHi] = credibleTierRange(rating);
   const candidateCountries = Object.values(COUNTRY_BY_CODE)
-    .filter((c) => c.tier <= Math.max(2, Math.min(6, Math.round(rating / 14))))
+    .filter((c) => c.tier >= tierLo && c.tier <= tierHi)
     .sort(() => rng.float() - 0.5)
     .slice(0, 12);
 
@@ -86,14 +104,17 @@ export function generateOffers(state) {
     const country = rng.pick(candidateCountries.length ? candidateCountries : Object.values(COUNTRY_BY_CODE));
     const league = getLeagueSystem(state, country.code);
     const division = league.divisions[0];
-    // clubes cuyo rating es compatible con el nivel del jugador
+    // clubes cuyo rating es compatible con el nivel del jugador; si ninguno
+    // cae en rango, el más parecido (nunca uno al azar sin relación).
     const compatibleClubs = division.clubs.filter((c) => Math.abs(c.rating - rating) < 22);
-    const club = rng.pick(compatibleClubs.length ? compatibleClubs : division.clubs);
+    const club = compatibleClubs.length ? rng.pick(compatibleClubs) : closestByRating(division.clubs, rating);
     if (!club || club.id === state.club?.id) continue;
 
     const prestigeGap = club.prestige - (state.club?.prestige ?? 50);
     const isGiant = prestigeGap > 35 && rng.chance(0.3);
-    const isExotic = country.tier >= 4 && club.budgetM > 40 && rng.chance(0.22);
+    // "Exótico" = liga rica pero sin tradición de élite (tier 2-3: al estilo
+    // de las ligas del golfo o asiáticas), no cualquier país débil.
+    const isExotic = country.tier >= 2 && country.tier <= 3 && club.budgetM > 35 && rng.chance(0.22);
 
     const baseWage = Math.max(0.02, (valueM / 4) * (0.7 + rng.range(0, 0.6)) * tier.offerQuality);
     const wageM = isExotic ? baseWage * rng.range(2.4, 3.4) : baseWage;
