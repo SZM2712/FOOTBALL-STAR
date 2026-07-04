@@ -25,7 +25,7 @@ test('el pity system garantiza un estado raro (o Noche de Leyenda) hacia el año
 
 test('pickPityState respeta el perfil de decisiones del jugador', () => {
   const rng = new Rng('pity-profile');
-  const neglectProfile = { physicalNeglectStreak: 6, physicalCareStreak: 0, seasonsAtCurrentClub: 0, partyRiskEvents: 0 };
+  const neglectProfile = { physicalNeglectStreak: 9, physicalCareStreak: 0, seasonsAtCurrentClub: 0, partyRiskEvents: 0 };
   assert.equal(pickPityState(neglectProfile, basePlayer(), rng), 'CRISTAL');
 
   const loyalProfile = { physicalNeglectStreak: 0, physicalCareStreak: 0, seasonsAtCurrentClub: 11, rejectedBigOffers: 3, partyRiskEvents: 0 };

@@ -1,10 +1,10 @@
 import { createGame, serializeGame, deserializeGame, finishChildhood, pushFeed } from './state/gameState.js';
 import { simulateSeason, rollPressConferenceQuestion } from './engine/season.js';
 import { rollNationalizationOpportunity } from './engine/nationalTeam.js';
-import { HOBBIES, TRAVEL_OPTIONS, buyLuxury } from './engine/personalLife.js';
+import { buyLuxury, LIFESTYLE_PACKAGES } from './engine/personalLife.js';
 import { acceptOffer, rejectOffer, AGENT_TIERS, generateSponsorships } from './engine/transferMarket.js';
 import { collectSponsorships } from './engine/finance.js';
-import { overallRating, POSITION_LABELS } from './engine/player.js';
+import { overallRating, POSITION_LABELS, ATTR_KEYS, ATTR_LABELS } from './engine/player.js';
 import { computeLegacy, buildCareerSummary } from './engine/legacy.js';
 import { RARE_STATE_DEFS } from './engine/rareStates.js';
 import { COUNTRY_BY_CODE } from './data/countries.js';
@@ -566,6 +566,26 @@ function attachRetirementHandlers() {
   });
 }
 
+function showTrainingModal() {
+  const streak = game.player.trainingFocusStreak || { attr: null, count: 0 };
+  const attrOptions = ATTR_KEYS.map((k) => {
+    const isStreak = streak.attr === k && streak.count >= 1;
+    const bonusNote = isStreak ? ` (racha x${streak.count + 1}: mejor ganancia)` : '';
+    return {
+      label: `${ATTR_LABELS[k]} — actual ${game.player.attrs[k]}${bonusNote}`,
+      value: k,
+    };
+  });
+  const options = attrOptions.concat([
+    { label: 'Invisible: descanso, nutrición, psicología', value: 'invisible' },
+  ]);
+  const prompt =
+    game.player.age >= 32
+      ? 'A esta edad cada decisión pesa el doble. ¿Qué trabajas este año?'
+      : 'Elige un atributo para enfocar este año. Repetir el mismo foco varios años seguidos da mejor rendimiento.';
+  return showModal({ title: 'Entrenamiento', desc: prompt, options });
+}
+
 async function handleAdvanceYear() {
   if (busy || game.retired) return;
   busy = true;
@@ -596,55 +616,17 @@ async function handleAdvanceYear() {
     });
   }
 
-  const trainingPrompt =
-    game.player.age >= 32
-      ? '¿En qué te enfocas esta temporada? A esta edad, cada decisión pesa el doble.'
-      : game.player.age <= 20
-      ? '¿En qué te enfocas esta temporada mientras terminas de formarte?'
-      : '¿En qué te enfocas esta temporada?';
-  decisions.training = await showModal({
-    title: 'Entrenamiento',
-    desc: trainingPrompt,
-    options: game.rng.shuffle([
-      { label: 'Técnico: tiro, pase y regate', value: 'tecnico' },
-      { label: 'Físico: ritmo y potencia', value: 'fisico' },
-      { label: 'Invisible: descanso, nutrición, psicología', value: 'invisible' },
-    ]),
-  });
+  decisions.trainingFocus = await showTrainingModal();
 
-  // Se muestra un subconjunto aleatorio (no siempre las mismas opciones ni el mismo orden).
-  const hobbyPool = game.rng.shuffle(Object.entries(HOBBIES).map(([k, v]) => ({ label: v.label, value: k })));
-  decisions.hobby = await showModal({
-    title: 'Tiempo libre',
-    desc: '¿A qué dedicas tus ratos libres este año?',
-    options: hobbyPool.slice(0, 3).concat([{ label: 'Nada en particular', value: null }]),
+  const pkg = await showModal({
+    title: 'Vida fuera de la cancha',
+    desc: '¿Cómo llevas este año lejos de la cancha?',
+    options: game.rng.shuffle(LIFESTYLE_PACKAGES).slice(0, 4).map((p) => ({ label: p.label, value: p })),
   });
-
-  if (game.rng.chance(0.75)) {
-    decisions.travel = await showModal({
-      title: 'Vacaciones de verano',
-      desc: '¿Cómo descansas este verano?',
-      options: game.rng.shuffle(Object.entries(TRAVEL_OPTIONS).map(([k, v]) => ({ label: v.label, value: k }))),
-    });
-  } else {
-    decisions.travel = null; // año sin vacaciones especiales, sigues concentrado en lo tuyo
-  }
-
-  const socialPool = game.rng.shuffle([
-    { label: 'Vida tranquila, sin excesos', value: { party: 'ninguna', gambling: 'no' } },
-    { label: 'Salidas moderadas con el grupo', value: { party: 'moderada', gambling: 'no' } },
-    { label: 'Noches intensas de fiesta', value: { party: 'intensa', gambling: 'no' } },
-    { label: 'Apuestas en el casino', value: { party: 'ninguna', gambling: 'ocasional' } },
-    { label: 'Una noche de más en las apuestas', value: { party: 'ninguna', gambling: 'fuerte' } },
-    { label: 'Quedarte en casa con la familia', value: { party: 'ninguna', gambling: 'no' } },
-  ]);
-  const social = await showModal({
-    title: 'Vida social',
-    desc: '¿Cómo llevas tu vida fuera de la cancha?',
-    options: socialPool.slice(0, 4),
-  });
-  decisions.party = social.party;
-  decisions.gambling = social.gambling;
+  decisions.hobby = pkg.hobby;
+  decisions.travel = pkg.travel;
+  decisions.party = pkg.party;
+  decisions.gambling = pkg.gambling;
 
   const before = { rareActive: game.rareTracker.active?.id, retired: game.retired };
   const feedEntries = simulateSeason(game, decisions);

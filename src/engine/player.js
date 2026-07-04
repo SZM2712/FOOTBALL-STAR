@@ -76,6 +76,8 @@ export function createPlayer(rng, country, options = {}) {
     consecutiveInvisibleTraining: 0,
     monthsSinceInjury: 999,
     extraLongevity: 0,
+    trainingFocusStreak: { attr: null, count: 0 },
+    potentialNudges: 0,
   };
 }
 

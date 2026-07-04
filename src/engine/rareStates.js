@@ -241,7 +241,7 @@ export function tryAnnualCareerStates(tracker, player, careerYear, rng) {
 
 /** Elige qué estado forzar en el pity system según el perfil de decisiones. */
 export function pickPityState(profile, player, rng) {
-  if (profile.physicalNeglectStreak >= profile.physicalCareStreak && profile.physicalNeglectStreak >= 3) {
+  if (profile.physicalNeglectStreak >= profile.physicalCareStreak + 4 && profile.physicalNeglectStreak >= 8) {
     return 'CRISTAL';
   }
   if (profile.seasonsAtCurrentClub >= 10 && profile.rejectedBigOffers >= 3) {

@@ -6,18 +6,21 @@ import { createGame, finishChildhood } from '../src/state/gameState.js';
 import { simulateSeason } from '../src/engine/season.js';
 import { acceptOffer, rejectOffer } from '../src/engine/transferMarket.js';
 import { computeLegacy, LEGACY_TITLES } from '../src/engine/legacy.js';
-import { HOBBIES, TRAVEL_OPTIONS } from '../src/engine/personalLife.js';
+import { LIFESTYLE_PACKAGES } from '../src/engine/personalLife.js';
+import { ATTR_KEYS } from '../src/engine/player.js';
 import { MAX_RARE_STATES_PER_CAREER } from '../src/engine/rareStates.js';
 import { CHILDHOOD_STAGES, optionsForStage, advanceChildhoodStage } from '../src/engine/childhood.js';
 
 const N = Number(process.argv[2]) || 1000;
 
 function autoDecide(state) {
+  const pkg = state.rng.pick(LIFESTYLE_PACKAGES);
   return {
-    training: state.rng.pick(['fisico', 'tecnico', 'invisible', 'tecnico', 'fisico']),
-    hobby: state.rng.pick(Object.keys(HOBBIES)),
-    travel: state.rng.pick(Object.keys(TRAVEL_OPTIONS)),
-    party: state.rng.pick(['ninguna', 'ninguna', 'ninguna', 'moderada', 'intensa']),
+    trainingFocus: state.rng.pick([...ATTR_KEYS, 'invisible']),
+    hobby: pkg.hobby,
+    travel: pkg.travel,
+    party: pkg.party,
+    gambling: pkg.gambling,
     nationalizationChoice: state.rng.chance(0.5) ? 'accept' : 'reject',
   };
 }

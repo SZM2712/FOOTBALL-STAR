@@ -142,6 +142,76 @@ function clamp(v, min = 0, max = 100) {
   return Math.max(min, Math.min(max, v));
 }
 
+/** Paquetes de "vida fuera de la cancha": combinan hobby + vacaciones +
+ * vida social + apuestas en UNA sola decisión con identidad propia, en vez
+ * de tres modales sueltos y repetitivos. Cada uno es una apuesta distinta:
+ * calma vs. ambición vs. fama vs. riesgo. */
+export const LIFESTYLE_PACKAGES = [
+  {
+    id: 'familiar',
+    label: 'Vida tranquila junto a los tuyos',
+    desc: 'Cerca de la familia, lejos del ruido mediático.',
+    hobby: 'lectura',
+    travel: 'pueblo',
+    party: 'ninguna',
+    gambling: 'no',
+  },
+  {
+    id: 'ambicion',
+    label: 'Ambición y negocios',
+    desc: 'Construyes algo propio fuera de la cancha.',
+    hobby: 'negocios',
+    travel: 'cultural',
+    party: 'ninguna',
+    gambling: 'no',
+  },
+  {
+    id: 'estrella',
+    label: 'Vida de estrella mediática',
+    desc: 'Cámaras, fama y mucho carisma... con riesgo de escándalo.',
+    hobby: 'musica',
+    travel: 'ibiza',
+    party: 'intensa',
+    gambling: 'no',
+  },
+  {
+    id: 'foco',
+    label: 'Foco total en el fútbol',
+    desc: 'Nada te distrae de tu profesión.',
+    hobby: null,
+    travel: 'descanso',
+    party: 'ninguna',
+    gambling: 'no',
+  },
+  {
+    id: 'riesgo',
+    label: 'Vivir al límite',
+    desc: 'Apuestas, fiestas y adrenalina fuera de la cancha.',
+    hobby: 'videojuegos',
+    travel: 'ibiza',
+    party: 'moderada',
+    gambling: 'ocasional',
+  },
+  {
+    id: 'social',
+    label: 'Salidas con el grupo, sin excesos',
+    desc: 'Equilibrio entre diversión y responsabilidad.',
+    hobby: 'golf',
+    travel: 'cultural',
+    party: 'moderada',
+    gambling: 'no',
+  },
+  {
+    id: 'filantropo',
+    label: 'Causas benéficas y comunidad',
+    desc: 'Devuelves algo a la gente que te vio crecer.',
+    hobby: 'filantropia',
+    travel: 'pueblo',
+    party: 'ninguna',
+    gambling: 'no',
+  },
+];
+
 /** Fiestas y vicios: sistema de riesgo/recompensa que puede derivar en adicción. */
 export function partyDecision(state, rng, intensity) {
   const pl = state.personalLife;

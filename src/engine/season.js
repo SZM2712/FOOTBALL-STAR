@@ -1,6 +1,6 @@
 import { COUNTRY_BY_CODE } from '../data/countries.js';
 import { CLUB_CONTINENTAL_CUPS, BALLON_NAME, GOLDEN_BOOT_NAME } from '../data/clubs.js';
-import { growAttributes, overallRating } from './player.js';
+import { growAttributes, overallRating, ATTR_KEYS, ATTR_LABELS } from './player.js';
 import { simulateMatch } from './match.js';
 import { PRESS_QUESTIONS } from './events.js';
 import {
@@ -62,26 +62,41 @@ export function simulateSeason(state, decisions = {}) {
   const feed = [];
   const push = (text, type = 'normal') => feed.push({ text, type });
 
-  // ---- 1. Entrenamiento ----
+  // ---- 1. Entrenamiento: enfoque en un atributo concreto (o invisible) ----
+  // Elegir el mismo atributo varios años seguidos da un bono creciente
+  // (especializarte), cambiar de foco reinicia la racha (versatilidad).
   const trainingBonus = {};
-  if (decisions.training === 'fisico') {
-    trainingBonus.phy = 3;
-    trainingBonus.pac = 1;
-    state.rareTracker.profile.physicalCareStreak = (state.rareTracker.profile.physicalCareStreak || 0) + 1;
-    state.rareTracker.profile.physicalNeglectStreak = 0;
-    state.player.consecutiveInvisibleTraining = 0;
-  } else if (decisions.training === 'tecnico') {
-    trainingBonus.dri = 2;
-    trainingBonus.pas = 2;
-    trainingBonus.sho = 2;
-    state.rareTracker.profile.physicalNeglectStreak = (state.rareTracker.profile.physicalNeglectStreak || 0) + 1;
-    state.rareTracker.profile.physicalCareStreak = 0;
-    state.player.consecutiveInvisibleTraining = 0;
-  } else if (decisions.training === 'invisible') {
+  const focus = decisions.trainingFocus;
+  if (focus === 'invisible') {
     trainingBonus.men = 3;
     state.player.consecutiveInvisibleTraining = (state.player.consecutiveInvisibleTraining || 0) + 1;
     state.player.form = clamp(state.player.form + 8);
     state.rareTracker.profile.physicalCareStreak = (state.rareTracker.profile.physicalCareStreak || 0) + 0.5;
+    state.player.trainingFocusStreak = { attr: 'invisible', count: 1 };
+  } else if (focus && ATTR_KEYS.includes(focus)) {
+    const streak = state.player.trainingFocusStreak || { attr: null, count: 0 };
+    const newCount = streak.attr === focus ? streak.count + 1 : 1;
+    state.player.trainingFocusStreak = { attr: focus, count: newCount };
+    const streakBonus = Math.min(3, newCount - 1);
+    trainingBonus[focus] = 5 + streakBonus;
+    state.player.consecutiveInvisibleTraining = 0;
+
+    // Con 7 atributos posibles (solo 2 "físicos"), un desliz aislado no debe
+    // borrar de golpe la racha acumulada: decae de a poco en vez de resetear.
+    if (focus === 'phy' || focus === 'pac') {
+      state.rareTracker.profile.physicalCareStreak = (state.rareTracker.profile.physicalCareStreak || 0) + 1;
+      state.rareTracker.profile.physicalNeglectStreak = Math.max(0, (state.rareTracker.profile.physicalNeglectStreak || 0) - 1);
+    } else {
+      state.rareTracker.profile.physicalNeglectStreak = (state.rareTracker.profile.physicalNeglectStreak || 0) + 1;
+      state.rareTracker.profile.physicalCareStreak = Math.max(0, (state.rareTracker.profile.physicalCareStreak || 0) - 1);
+    }
+
+    // Especialización sostenida: rara vez, el techo mismo sube un punto.
+    if (newCount >= 4 && (state.player.potentialNudges || 0) < 3 && rng.chance(0.06)) {
+      state.player.potential = Math.min(99, state.player.potential + 1);
+      state.player.potentialNudges = (state.player.potentialNudges || 0) + 1;
+      push(`Años de trabajo en ${ATTR_LABELS[focus]} rinden frutos: superas tus propios límites y tu techo como jugador crece.`, 'rare');
+    }
   }
 
   // ---- 1.5 Rueda de prensa (si la UI la resolvió antes de llamar) ----
@@ -323,7 +338,16 @@ export function simulateSeason(state, decisions = {}) {
   state.bigOfferRejectedThisYear = false;
 
   // ---- 7. Crecimiento y envejecimiento ----
+  const attrsBefore = { ...state.player.attrs };
   growAttributes(state.player, rng, trainingBonus);
+  const deltas = ATTR_KEYS.map((k) => ({ k, d: state.player.attrs[k] - attrsBefore[k] })).filter((x) => x.d !== 0);
+  if (deltas.length) {
+    const summary = deltas
+      .sort((a, b) => Math.abs(b.d) - Math.abs(a.d))
+      .map((x) => `${ATTR_LABELS[x.k]} ${x.d > 0 ? '+' : ''}${x.d}`)
+      .join(', ');
+    push(`Progreso de la temporada: ${summary}.`);
+  }
   state.player.age += 1;
   state.year += 1;
 
