@@ -1,5 +1,5 @@
 import { createGame, serializeGame, deserializeGame, finishChildhood, pushFeed } from './state/gameState.js';
-import { simulateSeason, rollPressConferenceQuestion } from './engine/season.js';
+import { startSeason, playNextMatch, finishSeason, isMatchdayPending, rollPressConferenceQuestion } from './engine/season.js';
 import { rollNationalizationOpportunity } from './engine/nationalTeam.js';
 import { buyLuxury, LIFESTYLE_PACKAGES, rollPersonalLifeEvent } from './engine/personalLife.js';
 import { acceptOffer, rejectOffer, AGENT_TIERS, generateSponsorships } from './engine/transferMarket.js';
@@ -24,6 +24,7 @@ import { renderFeed } from './ui/components/feed.js';
 let game = null;
 let activeTab = 'diario';
 let busy = false;
+let pendingDecisions = null; // decisiones de pre-temporada, vivas entre startSeason y finishSeason
 
 const app = document.getElementById('app');
 
@@ -188,6 +189,21 @@ function attachCreationHandlers() {
 // ---------------------------------------------------------------------------
 // Shell del juego (topbar + tabs + contenido)
 // ---------------------------------------------------------------------------
+function renderAdvanceBar() {
+  const ps = game.pendingSeason;
+  if (!ps || ps.matchesInSeason === 0) {
+    return `<div class="advance-bar"><button class="btn primary advance-btn" data-advance-year ${busy ? 'disabled' : ''}>Avanzar año ▶</button></div>`;
+  }
+  if (ps.matchIndex < ps.matchesInSeason) {
+    return `
+      <div class="advance-bar">
+        <button class="btn primary advance-btn" data-play-match ${busy ? 'disabled' : ''}>Jugar próximo partido ▶ (J${ps.matchIndex + 1}/${ps.matchesInSeason})</button>
+        <button class="btn block" style="margin-top:8px" data-sim-rest ${busy ? 'disabled' : ''}>Simular resto de la temporada</button>
+      </div>`;
+  }
+  return `<div class="advance-bar"><button class="btn primary advance-btn" data-close-season ${busy ? 'disabled' : ''}>Cerrar temporada ▶</button></div>`;
+}
+
 function renderGameShell() {
   const tabs = [
     ['diario', 'Diario'],
@@ -211,7 +227,7 @@ function renderGameShell() {
     <div class="screen" data-tab-content>
       ${renderTabContent()}
     </div>
-    ${activeTab !== 'ajustes' ? `<div class="advance-bar"><button class="btn primary advance-btn" data-advance-year ${busy ? 'disabled' : ''}>Avanzar año ▶</button></div>` : ''}
+    ${activeTab !== 'ajustes' ? renderAdvanceBar() : ''}
   `;
 }
 
@@ -508,6 +524,12 @@ function attachGameHandlers() {
 
   const advanceBtn = app.querySelector('[data-advance-year]');
   if (advanceBtn) advanceBtn.addEventListener('click', handleAdvanceYear);
+  const playMatchBtn = app.querySelector('[data-play-match]');
+  if (playMatchBtn) playMatchBtn.addEventListener('click', handlePlayNextMatch);
+  const simRestBtn = app.querySelector('[data-sim-rest]');
+  if (simRestBtn) simRestBtn.addEventListener('click', handleSimRestOfSeason);
+  const closeSeasonBtn = app.querySelector('[data-close-season]');
+  if (closeSeasonBtn) closeSeasonBtn.addEventListener('click', handleCloseSeason);
 
   app.querySelectorAll('[data-agent]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -870,6 +892,13 @@ function showTrainingModal() {
   return showModal({ title: 'Entrenamiento', desc: prompt, options });
 }
 
+async function showRareModals(entries) {
+  const rareEntries = entries.filter((f) => f.type === 'rare');
+  for (const r of rareEntries) {
+    await showInfoModal({ title: '⭐ Momento especial', text: r.text, rare: true, negative: /Maldición|Cristal|Caída|expulsado|Expulsado/.test(r.text) });
+  }
+}
+
 async function handleAdvanceYear() {
   if (busy || game.retired) return;
   busy = true;
@@ -922,19 +951,55 @@ async function handleAdvanceYear() {
   decisions.party = pkg.party;
   decisions.gambling = pkg.gambling;
 
-  const before = { rareActive: game.rareTracker.active?.id, retired: game.retired };
-  const feedEntries = simulateSeason(game, decisions);
+  pendingDecisions = decisions;
+  const feedEntries = startSeason(game, decisions);
   busy = false;
   render();
+  await showRareModals(feedEntries);
 
-  const rareEntries = feedEntries.filter((f) => f.type === 'rare');
-  for (const r of rareEntries) {
-    await showInfoModal({ title: '⭐ Momento especial', text: r.text, rare: true, negative: /Maldición|Cristal|Caída|expulsado|Expulsado/.test(r.text) });
+  if (!isMatchdayPending(game)) {
+    await handleCloseSeason();
   }
+}
 
-  if (game.retired) {
-    render();
+async function handlePlayNextMatch() {
+  if (busy || game.retired) return;
+  busy = true;
+  render();
+  const feedEntries = playNextMatch(game);
+  busy = false;
+  render();
+  await showRareModals(feedEntries);
+
+  if (!isMatchdayPending(game)) {
+    await handleCloseSeason();
   }
+}
+
+async function handleSimRestOfSeason() {
+  if (busy || game.retired) return;
+  busy = true;
+  render();
+  let allFeed = [];
+  while (isMatchdayPending(game)) {
+    allFeed = allFeed.concat(playNextMatch(game));
+  }
+  busy = false;
+  render();
+  await showRareModals(allFeed);
+  await handleCloseSeason();
+}
+
+async function handleCloseSeason() {
+  if (busy) return;
+  busy = true;
+  render();
+  const feedEntries = finishSeason(game, pendingDecisions || {});
+  pendingDecisions = null;
+  busy = false;
+  render();
+  await showRareModals(feedEntries);
+  render();
 }
 
 render();

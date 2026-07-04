@@ -3,11 +3,7 @@ import { CLUB_CONTINENTAL_CUPS, BALLON_NAME, GOLDEN_BOOT_NAME } from '../data/cl
 import { growAttributes, overallRating, ATTR_KEYS, ATTR_LABELS } from './player.js';
 import { simulateMatch } from './match.js';
 import { PRESS_QUESTIONS } from './events.js';
-import {
-  tryAnnualCareerStates,
-  RARE_STATE_DEFS,
-  narrativeFor,
-} from './rareStates.js';
+import { tryAnnualCareerStates, RARE_STATE_DEFS, narrativeFor } from './rareStates.js';
 import {
   familyYearlyEvent,
   partnerYearlyEvent,
@@ -25,7 +21,6 @@ import {
   isContinentalYear,
   attemptQualification,
   simulateTournamentRun,
-  rollNationalizationOpportunity,
   CONTINENTAL_CUP_NAME,
 } from './nationalTeam.js';
 
@@ -39,6 +34,12 @@ function applyDelta(state, effect) {
   if (effect.formD) state.player.form = clamp(state.player.form + effect.formD);
   if (effect.menD) state.player.attrs.men = clamp(state.player.attrs.men + effect.menD);
   if (effect.famedD) state.fame = clamp(state.fame + effect.famedD);
+}
+
+function flushFeed(state, feed) {
+  for (const f of feed) {
+    state.feed.push({ year: state.year, age: state.player.age, worldYear: state.worldYearStart + state.year - 1, type: f.type, text: f.text });
+  }
 }
 
 const RETIREMENT_AGE_HARD = 40;
@@ -98,20 +99,36 @@ export function buildLeagueTable(state, leagueSystem, division, seasonStats, rng
   return { leagueName: leagueSystem.leagueName, divisionLabel: division.label, year: state.year, rows };
 }
 
+function emptySeasonStats() {
+  return {
+    matches: 0,
+    goals: 0,
+    assists: 0,
+    yellow: 0,
+    red: 0,
+    ratings: [],
+    wins: 0,
+    draws: 0,
+    losses: 0,
+    teamGoalsFor: 0,
+    teamGoalsAgainst: 0,
+  };
+}
+
 /**
- * Simula una temporada completa (un año de carrera): entrenamiento, partidos
- * de club, competiciones continentales, calendario de selección, vida
- * personal, finanzas, envejecimiento y chequeo de estados raros.
- * decisions: { training, hobby, travel, party, acceptNationalCall }
+ * Arranca la temporada: aplica todas las decisiones de pre-temporada
+ * (entrenamiento, rueda de prensa, ocio, vicios, evento de vida personal,
+ * familia/pareja) y prepara el calendario de partidos de club, si tiene
+ * club. No juega ningún partido todavía: eso lo hace playNextMatch().
+ * decisions: { trainingFocus, pressQuestion, pressAnswerIndex, hobby,
+ * travel, party, gambling, personalLifeEvent, personalLifeChoiceIndex }
  */
-export function simulateSeason(state, decisions = {}) {
+export function startSeason(state, decisions = {}) {
   const rng = state.rng;
   const feed = [];
   const push = (text, type = 'normal') => feed.push({ text, type });
 
-  // ---- 1. Entrenamiento: enfoque en un atributo concreto (o invisible) ----
-  // Elegir el mismo atributo varios años seguidos da un bono creciente
-  // (especializarte), cambiar de foco reinicia la racha (versatilidad).
+  // ---- Entrenamiento: enfoque en un atributo concreto (o invisible) ----
   const trainingBonus = {};
   const focus = decisions.trainingFocus;
   if (focus === 'invisible') {
@@ -146,7 +163,7 @@ export function simulateSeason(state, decisions = {}) {
     }
   }
 
-  // ---- 1.5 Rueda de prensa (si la UI la resolvió antes de llamar) ----
+  // ---- Rueda de prensa (si la UI la resolvió antes de llamar) ----
   if (decisions.pressQuestion && decisions.pressAnswerIndex != null) {
     const opt = decisions.pressQuestion.options[decisions.pressAnswerIndex];
     if (opt) {
@@ -157,7 +174,7 @@ export function simulateSeason(state, decisions = {}) {
     }
   }
 
-  // ---- 2. Ocio: hobby y vacaciones ----
+  // ---- Ocio: hobby y vacaciones ----
   if (decisions.hobby && HOBBIES[decisions.hobby]) {
     HOBBIES[decisions.hobby].apply(state);
     push(`Este año dedicas tiempo libre a: ${HOBBIES[decisions.hobby].label}.`);
@@ -168,7 +185,7 @@ export function simulateSeason(state, decisions = {}) {
     if (msg) push(msg, 'negative');
   }
 
-  // ---- 3. Fiestas / vicios ----
+  // ---- Fiestas / vicios ----
   for (const m of partyDecision(state, rng, decisions.party || 'ninguna')) push(m, 'negative');
   for (const m of gamblingDecision(state, rng, decisions.gambling || 'no')) push(m, 'negative');
   for (const m of viceSpiralCheck(state, rng)) push(m, m.includes('Caída Libre') || m.includes('redención') ? 'rare' : 'negative');
@@ -179,7 +196,7 @@ export function simulateSeason(state, decisions = {}) {
     state.retirementReason = 'expulsado';
   }
 
-  // ---- 3.5 Evento interactivo de vida personal (resuelto en la UI antes de llamar) ----
+  // ---- Evento interactivo de vida personal (resuelto en la UI antes de llamar) ----
   if (decisions.personalLifeEvent && decisions.personalLifeChoiceIndex != null) {
     const opt = decisions.personalLifeEvent.options[decisions.personalLifeChoiceIndex];
     if (opt) {
@@ -188,7 +205,7 @@ export function simulateSeason(state, decisions = {}) {
     }
   }
 
-  // ---- 4. Vida personal: familia y pareja ----
+  // ---- Vida personal: familia y pareja ----
   const fam = familyYearlyEvent(state, rng);
   if (fam) {
     push(fam.text, 'event');
@@ -200,97 +217,133 @@ export function simulateSeason(state, decisions = {}) {
     applyDelta(state, part);
   }
 
-  // ---- 5. Temporada de club ----
+  // ---- Calendario de partidos de club para esta temporada ----
+  let hasMatches = false;
   if (!state.retired && !state.club) {
     push('Sigues sin equipo. Entrenas por tu cuenta mientras tu agente busca una oportunidad.', 'negative');
-  }
-  if (!state.retired && state.club) {
+  } else if (!state.retired && state.club) {
     const leagueSystem = getLeagueSystem(state, state.club.countryCode);
     const division = leagueSystem.divisions[state.club.division] || leagueSystem.divisions[0];
-    const numClubs = division.clubs.length;
-    const matchesInSeason = Math.max(10, (numClubs - 1) * 2);
-    const rivalPool = division.clubs.filter((c) => c.id !== state.club.id);
-    const seasonStats = {
-      matches: 0,
-      goals: 0,
-      assists: 0,
-      yellow: 0,
-      red: 0,
-      ratings: [],
-      wins: 0,
-      draws: 0,
-      losses: 0,
-      teamGoalsFor: 0,
-      teamGoalsAgainst: 0,
+    const matchesInSeason = Math.max(10, (division.clubs.length - 1) * 2);
+    hasMatches = true;
+    state.pendingSeason = {
+      trainingBonus,
+      matchIndex: 0,
+      matchesInSeason,
+      leagueSystem,
+      division,
+      rivalPool: division.clubs.filter((c) => c.id !== state.club.id),
+      seasonStats: emptySeasonStats(),
+      weeksOut: Math.ceil(state.suspensionWeeks || 0),
     };
-    let weeksOut = Math.ceil((state.suspensionWeeks || 0));
     state.suspensionWeeks = 0;
+  }
+  if (!hasMatches) {
+    state.pendingSeason = { trainingBonus, matchIndex: 0, matchesInSeason: 0, seasonStats: emptySeasonStats() };
+  }
 
-    for (let m = 0; m < matchesInSeason; m++) {
-      if (weeksOut > 0) {
-        weeksOut -= 2;
-        continue;
-      }
-      const isLateSeason = m >= matchesInSeason - 3;
-      const opp = rng.pick(rivalPool.length ? rivalPool : division.clubs);
-      const matchCtx = {
-        highPressure: isLateSeason && rng.chance(0.45),
-        competition: leagueSystem.leagueName,
-        fatigue: Math.min(1, m / matchesInSeason),
-      };
-      const result = simulateMatch(state.player, state.club.rating, opp.rating, rng, matchCtx, state.rareTracker);
+  flushFeed(state, feed);
+  return feed;
+}
 
-      seasonStats.matches++;
-      seasonStats.goals += result.goals;
-      seasonStats.assists += result.assists;
-      seasonStats.ratings.push(result.matchRating);
-      seasonStats.teamGoalsFor += result.teamGoals;
-      seasonStats.teamGoalsAgainst += result.oppGoals;
-      if (result.result === 'win') seasonStats.wins++;
-      else if (result.result === 'draw') seasonStats.draws++;
-      else seasonStats.losses++;
-      if (result.yellow) seasonStats.yellow++;
-      if (result.red) seasonStats.red++;
-      state.player.recentRatings = (state.player.recentRatings || []).concat(result.matchRating).slice(-10);
+/** Simula exactamente el próximo partido de la temporada en curso (requiere
+ * haber llamado startSeason antes). Devuelve el feed de ese partido. */
+export function playNextMatch(state) {
+  const ps = state.pendingSeason;
+  if (!ps || ps.matchIndex >= ps.matchesInSeason) return [];
+  const rng = state.rng;
+  const feed = [];
+  const push = (text, type = 'normal') => feed.push({ text, type });
+  const m = ps.matchIndex;
 
-      const resultChar = result.result === 'win' ? 'W' : result.result === 'draw' ? 'E' : 'P';
-      push(
-        `J${m + 1}${matchCtx.highPressure ? ' 🔥' : ''}: ${state.club.name} ${result.teamGoals}-${result.oppGoals} ${opp.name} (${resultChar})`,
-        result.result === 'loss' ? 'negative' : 'normal'
-      );
+  if (ps.weeksOut > 0) {
+    ps.weeksOut -= 2;
+    push(`J${m + 1}: sigues de baja, no viajas con el plantel.`, 'negative');
+  } else {
+    const isLateSeason = m >= ps.matchesInSeason - 3;
+    const opp = rng.pick(ps.rivalPool.length ? ps.rivalPool : ps.division.clubs);
+    const matchCtx = {
+      highPressure: isLateSeason && rng.chance(0.45),
+      competition: ps.leagueSystem.leagueName,
+      fatigue: Math.min(1, m / ps.matchesInSeason),
+    };
+    const result = simulateMatch(state.player, state.club.rating, opp.rating, rng, matchCtx, state.rareTracker);
 
-      if (result.inZona) {
-        state.rareTracker.legendaryNights++;
-        push(
-          `🌟 NOCHE DE LEYENDA: ${result.events[0]?.text || 'entras en La Zona y el partido es completamente tuyo.'}`,
-          'rare'
-        );
-      } else {
-        for (const ev of result.events) push(ev.text, 'event');
-      }
+    ps.seasonStats.matches++;
+    ps.seasonStats.goals += result.goals;
+    ps.seasonStats.assists += result.assists;
+    ps.seasonStats.ratings.push(result.matchRating);
+    ps.seasonStats.teamGoalsFor += result.teamGoals;
+    ps.seasonStats.teamGoalsAgainst += result.oppGoals;
+    if (result.result === 'win') ps.seasonStats.wins++;
+    else if (result.result === 'draw') ps.seasonStats.draws++;
+    else ps.seasonStats.losses++;
+    if (result.yellow) ps.seasonStats.yellow++;
+    if (result.red) ps.seasonStats.red++;
+    state.player.recentRatings = (state.player.recentRatings || []).concat(result.matchRating).slice(-10);
 
-      if (result.missedPenalty && state.rareTracker.canStartNew() && !state.rareTracker.hasHad('LA_MALDICION')) {
-        state.rareTracker.start('LA_MALDICION', state.year);
-        state.rareTracker.signal('pressureFailures');
-        push('Fallas un penal decisivo en un partido de máxima presión. La Maldición ha comenzado.', 'rare');
-      }
+    const resultChar = result.result === 'win' ? 'W' : result.result === 'draw' ? 'E' : 'P';
+    push(
+      `J${m + 1}${matchCtx.highPressure ? ' 🔥' : ''}: ${state.club.name} ${result.teamGoals}-${result.oppGoals} ${opp.name} (${resultChar})`,
+      result.result === 'loss' ? 'negative' : 'normal'
+    );
 
-      if (result.injury) {
-        weeksOut = result.injury.weeksOut;
-        push(result.injury.text, result.injury.severity === 'grave' ? 'rare' : 'negative');
-        if (result.injury.severity === 'grave') {
-          state.player.monthsSinceInjury = 0;
-          if (state.rareTracker.canStartNew() && !state.rareTracker.hasHad('CRISTAL') && rng.chance(0.035)) {
-            state.rareTracker.start('CRISTAL', state.year);
-            state.player.injuryProneness = Math.min(0.95, state.player.injuryProneness * 3);
-            push('Tu cuerpo nunca vuelve a ser el mismo tras esta lesión grave. Cristal.', 'rare');
-          }
-        }
-      } else {
-        state.player.monthsSinceInjury = (state.player.monthsSinceInjury || 0) + 1;
-      }
+    if (result.inZona) {
+      state.rareTracker.legendaryNights++;
+      push(`🌟 NOCHE DE LEYENDA: ${result.events[0]?.text || 'entras en La Zona y el partido es completamente tuyo.'}`, 'rare');
+    } else {
+      for (const ev of result.events) push(ev.text, 'event');
     }
 
+    if (result.missedPenalty && state.rareTracker.canStartNew() && !state.rareTracker.hasHad('LA_MALDICION')) {
+      state.rareTracker.start('LA_MALDICION', state.year);
+      state.rareTracker.signal('pressureFailures');
+      push('Fallas un penal decisivo en un partido de máxima presión. La Maldición ha comenzado.', 'rare');
+    }
+
+    if (result.injury) {
+      ps.weeksOut = result.injury.weeksOut;
+      push(result.injury.text, result.injury.severity === 'grave' ? 'rare' : 'negative');
+      if (result.injury.severity === 'grave') {
+        state.player.monthsSinceInjury = 0;
+        if (state.rareTracker.canStartNew() && !state.rareTracker.hasHad('CRISTAL') && rng.chance(0.035)) {
+          state.rareTracker.start('CRISTAL', state.year);
+          state.player.injuryProneness = Math.min(0.95, state.player.injuryProneness * 3);
+          push('Tu cuerpo nunca vuelve a ser el mismo tras esta lesión grave. Cristal.', 'rare');
+        }
+      }
+    } else {
+      state.player.monthsSinceInjury = (state.player.monthsSinceInjury || 0) + 1;
+    }
+  }
+
+  ps.matchIndex++;
+  flushFeed(state, feed);
+  return feed;
+}
+
+/** true si ya se jugaron todos los partidos de la temporada en curso (o si
+ * el jugador no tenía club, en cuyo caso no hay nada que jugar). */
+export function isMatchdayPending(state) {
+  const ps = state.pendingSeason;
+  return !!ps && ps.matchIndex < ps.matchesInSeason;
+}
+
+/**
+ * Cierra la temporada: copa continental, premios individuales, selección
+ * nacional, envejecimiento/crecimiento, estados raros, finanzas, contrato,
+ * retiro y ofertas para el próximo año. Requiere que ya se hayan jugado
+ * todos los partidos (isMatchdayPending debe ser false).
+ */
+export function finishSeason(state, decisions = {}) {
+  const rng = state.rng;
+  const feed = [];
+  const push = (text, type = 'normal') => feed.push({ text, type });
+  const ps = state.pendingSeason || { trainingBonus: {}, seasonStats: emptySeasonStats() };
+  const seasonStats = ps.seasonStats;
+
+  if (!state.retired && state.club && ps.leagueSystem) {
+    const { leagueSystem, division } = ps;
     const avgRating = seasonStats.ratings.length
       ? seasonStats.ratings.reduce((a, b) => a + b, 0) / seasonStats.ratings.length
       : 6.0;
@@ -359,10 +412,10 @@ export function simulateSeason(state, decisions = {}) {
     }
   }
 
-  // ---- 6. Selección nacional ----
+  // ---- Selección nacional ----
   if (!state.retired) {
     // La oportunidad (si la hay) se resuelve UNA sola vez, en la UI, antes de
-    // llamar a simulateSeason (ver rollNationalizationOpportunity), y se pasa
+    // llamar a startSeason (ver rollNationalizationOpportunity), y se pasa
     // aquí ya resuelta para no consumir el rng dos veces.
     const nat = decisions.nationalizationOffer || null;
     if (nat && decisions.nationalizationChoice) {
@@ -416,7 +469,7 @@ export function simulateSeason(state, decisions = {}) {
     }
   }
 
-  // ---- 6.5 Fidelidad al club: una señal por año, no por oferta rechazada ----
+  // ---- Fidelidad al club: una señal por año, no por oferta rechazada ----
   if (!state.transferredThisYear) {
     state.rareTracker.profile.seasonsAtCurrentClub = (state.rareTracker.profile.seasonsAtCurrentClub || 0) + 1;
   }
@@ -426,9 +479,9 @@ export function simulateSeason(state, decisions = {}) {
   state.transferredThisYear = false;
   state.bigOfferRejectedThisYear = false;
 
-  // ---- 7. Crecimiento y envejecimiento ----
+  // ---- Crecimiento y envejecimiento ----
   const attrsBefore = { ...state.player.attrs };
-  growAttributes(state.player, rng, trainingBonus);
+  growAttributes(state.player, rng, ps.trainingBonus || {});
   const deltas = ATTR_KEYS.map((k) => ({ k, d: state.player.attrs[k] - attrsBefore[k] })).filter((x) => x.d !== 0);
   if (deltas.length) {
     const summary = deltas
@@ -440,7 +493,7 @@ export function simulateSeason(state, decisions = {}) {
   state.player.age += 1;
   state.year += 1;
 
-  // ---- 8. Estados raros: resolución anual + chequeo ----
+  // ---- Estados raros: resolución anual + chequeo ----
   const resolvedId = state.rareTracker.tickYear(state.year);
   if (resolvedId) {
     push(`El estado "${RARE_STATE_DEFS[resolvedId].name}" llega a su fin.`, 'rare');
@@ -452,11 +505,11 @@ export function simulateSeason(state, decisions = {}) {
     push('Sientes que algo especial se acerca. Tu próximo partido de máxima presión será inolvidable.', 'rare');
   }
 
-  // ---- 9. Finanzas ----
+  // ---- Finanzas ----
   payYearlySalary(state);
   state.peakMoney = Math.max(state.peakMoney, state.money);
 
-  // ---- 9.5 Vencimiento de contrato ----
+  // ---- Vencimiento de contrato ----
   if (state.club && state.contract) {
     state.contract.years -= 1;
     if (state.contract.years <= 0) {
@@ -465,18 +518,32 @@ export function simulateSeason(state, decisions = {}) {
     }
   }
 
-  // ---- 10. Retiro automático por edad límite ----
+  // ---- Retiro automático por edad límite ----
   if (state.player.age >= RETIREMENT_AGE_HARD) {
     state.retired = true;
     state.retirementReason = state.retirementReason || 'edad';
   }
 
-  // ---- 11. Nuevas ofertas de mercado para el próximo año ----
+  // ---- Nuevas ofertas de mercado para el próximo año ----
   state.currentOffers = state.retired ? [] : generateOffers(state);
 
-  for (const f of feed) {
-    state.feed.push({ year: state.year, age: state.player.age, worldYear: state.worldYearStart + state.year - 1, type: f.type, text: f.text });
-  }
+  state.pendingSeason = null;
+  flushFeed(state, feed);
+  return feed;
+}
 
+/**
+ * Conveniencia: simula la temporada completa de punta a punta (arranque,
+ * todos los partidos, cierre) en un solo llamado. La usan los tests y
+ * scripts/simulate.js; la UI en cambio usa startSeason/playNextMatch/
+ * finishSeason por separado para poder avanzar partido a partido.
+ */
+export function simulateSeason(state, decisions = {}) {
+  const feed = [];
+  feed.push(...startSeason(state, decisions));
+  while (isMatchdayPending(state)) {
+    feed.push(...playNextMatch(state));
+  }
+  feed.push(...finishSeason(state, decisions));
   return feed;
 }
