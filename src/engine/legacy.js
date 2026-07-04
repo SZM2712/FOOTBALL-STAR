@@ -94,8 +94,55 @@ function narrativeForTitle(title) {
   }
 }
 
+/** Agrega las temporadas jugadas por club: partidos, goles, asistencias,
+ * rating promedio (ponderado por partidos) y títulos ganados ahí. */
+export function buildClubHistory(state) {
+  const byClub = new Map();
+  for (const season of state.stats.seasons) {
+    if (!byClub.has(season.club)) {
+      byClub.set(season.club, {
+        club: season.club,
+        years: 0,
+        fromYear: season.year,
+        toYear: season.year,
+        matches: 0,
+        goals: 0,
+        assists: 0,
+        ratingWeighted: 0,
+        trophies: [],
+      });
+    }
+    const entry = byClub.get(season.club);
+    entry.years += 1;
+    entry.fromYear = Math.min(entry.fromYear, season.year);
+    entry.toYear = Math.max(entry.toYear, season.year);
+    entry.matches += season.matches;
+    entry.goals += season.goals;
+    entry.assists += season.assists;
+    entry.ratingWeighted += (season.avgRating || 6) * Math.max(1, season.matches);
+  }
+  for (const t of state.trophies) {
+    const entry = byClub.get(t.withClub);
+    if (entry) entry.trophies.push(t.name);
+  }
+  return [...byClub.values()]
+    .map((e) => ({
+      club: e.club,
+      years: e.years,
+      fromYear: e.fromYear,
+      toYear: e.toYear,
+      matches: e.matches,
+      goals: e.goals,
+      assists: e.assists,
+      avgRating: Math.round((e.ratingWeighted / Math.max(1, e.matches)) * 100) / 100,
+      trophies: e.trophies,
+    }))
+    .sort((a, b) => a.fromYear - b.fromYear);
+}
+
 export function buildCareerSummary(state) {
   const clubs = [...new Set(state.stats.seasons.map((s) => s.club))];
+  const clubHistory = buildClubHistory(state);
   const rareHistory = state.rareTracker.history.map((h) => ({
     name: RARE_STATE_DEFS[h.id]?.name,
     startedYear: h.startedYear,
@@ -111,6 +158,7 @@ export function buildCareerSummary(state) {
     position: state.player.position,
     yearsActive: state.stats.seasons.length,
     clubs,
+    clubHistory,
     goals: state.stats.career.goals,
     assists: state.stats.career.assists,
     matches: state.stats.career.matches,

@@ -2,7 +2,7 @@ import { overallRating } from './player.js';
 import { laZonaProbability } from './rareStates.js';
 import { rollMatchEvents, rollInjury } from './events.js';
 
-function poissonSample(rng, lambda) {
+export function poissonSample(rng, lambda) {
   if (lambda <= 0) return 0;
   const L = Math.exp(-lambda);
   let k = 0;
@@ -12,6 +12,19 @@ function poissonSample(rng, lambda) {
     p *= rng.float();
   } while (p > L && k < 12);
   return k - 1;
+}
+
+/** Resultado de un partido a nivel de equipo, sin estadísticas individuales
+ * (usado por el modo Entrenador, donde no hay un jugador que controlar). */
+export function simulateTeamMatch(teamRating, oppRating, rng) {
+  const diff = teamRating - oppRating;
+  const teamGoals = Math.max(0, poissonSample(rng, 1.35 + diff / 22));
+  const oppGoals = Math.max(0, poissonSample(rng, 1.35 - diff / 22));
+  return {
+    teamGoals,
+    oppGoals,
+    result: teamGoals > oppGoals ? 'win' : teamGoals === oppGoals ? 'draw' : 'loss',
+  };
 }
 
 const GOAL_BIAS = { DEL: 0.85, MED: 0.32, DEF: 0.08, POR: 0.01 };

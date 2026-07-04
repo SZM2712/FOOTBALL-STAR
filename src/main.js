@@ -5,10 +5,17 @@ import { buyLuxury, LIFESTYLE_PACKAGES, rollPersonalLifeEvent } from './engine/p
 import { acceptOffer, rejectOffer, AGENT_TIERS, generateSponsorships } from './engine/transferMarket.js';
 import { collectSponsorships } from './engine/finance.js';
 import { overallRating, POSITION_LABELS, ATTR_KEYS, ATTR_LABELS } from './engine/player.js';
-import { computeLegacy, buildCareerSummary } from './engine/legacy.js';
+import { computeLegacy, buildCareerSummary, buildClubHistory } from './engine/legacy.js';
 import { RARE_STATE_DEFS } from './engine/rareStates.js';
 import { COUNTRY_BY_CODE } from './data/countries.js';
 import { CHILDHOOD_STAGES, optionsForStage, advanceChildhoodStage } from './engine/childhood.js';
+import {
+  startCoachCareer,
+  simulateCoachSeason,
+  acceptCoachOffer,
+  rejectCoachOffer,
+  computeCoachLegacy,
+} from './engine/coachCareer.js';
 import { showModal, showInfoModal, escapeHtml } from './ui/modal.js';
 import { renderPlayerCard } from './ui/components/playerCard.js';
 import { renderAttributeBars } from './ui/components/attributeBars.js';
@@ -35,6 +42,16 @@ function render() {
   if (game.phase === 'childhood') {
     app.innerHTML = renderChildhoodScreen();
     attachChildhoodHandlers();
+    return;
+  }
+  if (game.phase === 'coaching') {
+    if (game.coach.retired) {
+      app.innerHTML = renderFinalLegacyScreen();
+      attachRetirementHandlers();
+      return;
+    }
+    app.innerHTML = renderCoachScreen();
+    attachCoachHandlers();
     return;
   }
   if (game.retired) {
@@ -403,6 +420,23 @@ function renderPalmaresTab() {
       </div>
     </div>
     <div class="card">
+      <h3>Historial por equipo</h3>
+      ${
+        buildClubHistory(game)
+          .map(
+            (c) => `
+        <div class="row between" style="align-items:flex-start;margin-bottom:8px">
+          <div>
+            <div style="font-weight:700">${escapeHtml(c.club)}</div>
+            <div class="muted">${c.years} temporada${c.years === 1 ? '' : 's'} · ${c.matches} PJ · ${c.goals}G ${c.assists}A · rating ${c.avgRating}</div>
+            ${c.trophies.length ? `<div class="muted">🏆 ${c.trophies.map(escapeHtml).join(', ')}</div>` : ''}
+          </div>
+        </div>`
+          )
+          .join('') || '<p class="muted">Todavía no jugaste para ningún club.</p>'
+      }
+    </div>
+    <div class="card">
       <h3>Estados raros vividos</h3>
       ${rareHistory.length ? rareHistory.map((h) => `<div class="row between"><span>${escapeHtml(h.name || '')}</span><span class="muted">año ${h.year}</span></div>`).join('') : '<p class="muted">Ninguno todavía.</p>'}
     </div>
@@ -552,6 +586,25 @@ function renderRetirementScreen(state) {
         <p class="muted">Fortuna final: ${fmtMoney(summary.finalMoneyM)}</p>
       </div>
       <div class="card">
+        <h3>Historial por equipo</h3>
+        ${
+          summary.clubHistory.length
+            ? summary.clubHistory
+                .map(
+                  (c) => `
+          <div class="row between" style="align-items:flex-start;margin-bottom:8px">
+            <div>
+              <div style="font-weight:700">${escapeHtml(c.club)}</div>
+              <div class="muted">${c.years} temporada${c.years === 1 ? '' : 's'} · ${c.matches} PJ · ${c.goals}G ${c.assists}A · rating ${c.avgRating}</div>
+              ${c.trophies.length ? `<div class="muted">🏆 ${c.trophies.map(escapeHtml).join(', ')}</div>` : ''}
+            </div>
+          </div>`
+                )
+                .join('')
+            : '<p class="muted">Sin historial de clubes.</p>'
+        }
+      </div>
+      <div class="card">
         <h3>Estados raros vividos</h3>
         ${
           summary.rareStates.length
@@ -562,7 +615,12 @@ function renderRetirementScreen(state) {
       <div class="card col">
         <h3>Semilla de esta carrera</h3>
         <p><b>${escapeHtml(summary.seed)}</b> — compártela para que otros vivan la misma historia.</p>
-        <button class="btn primary block" data-export-final>Descargar historial (.json)</button>
+        ${
+          state.retirementReason !== 'expulsado'
+            ? '<button class="btn primary block" data-continue-coaching>Continuar como entrenador ▶</button>'
+            : ''
+        }
+        <button class="btn block" data-export-final>Descargar historial (.json)</button>
         <button class="btn block" data-new-career>Empezar una nueva carrera</button>
       </div>
     </div>
@@ -570,11 +628,189 @@ function renderRetirementScreen(state) {
 }
 
 function attachRetirementHandlers() {
-  app.querySelector('[data-export-final]').addEventListener('click', exportGame);
-  app.querySelector('[data-new-career]').addEventListener('click', () => {
+  app.querySelector('[data-export-final]')?.addEventListener('click', exportGame);
+  app.querySelector('[data-new-career]')?.addEventListener('click', () => {
     game = null;
     render();
   });
+  app.querySelector('[data-continue-coaching]')?.addEventListener('click', () => {
+    const feedTexts = startCoachCareer(game);
+    for (const t of feedTexts) pushFeed(game, t, 'rare');
+    render();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Modo Entrenador (segunda carrera post-retiro)
+// ---------------------------------------------------------------------------
+function renderCoachScreen() {
+  const coach = game.coach;
+  const offers = coach.currentOffers || [];
+  const employer = coach.nationalTeamJob ? COUNTRY_BY_CODE[coach.nationalTeamJob] : coach.club;
+  return `
+    <div class="topbar">
+      <div class="stat"><span class="flag">🧢</span><b>${coach.age}a</b></div>
+      <div class="stat">⭐<b>${Math.round(coach.reputation)}</b></div>
+      <div class="stat">🏆<b>${coach.trophies.length}</b></div>
+      <div class="stat">🗓️<b>${game.worldYearStart + game.year - 1 + coach.year}</b></div>
+    </div>
+    <div class="screen">
+      <div class="card">
+        <h3>Modo Entrenador</h3>
+        ${
+          coach.nationalTeamJob
+            ? `<p>Dirigís a la selección de <b>${escapeHtml(employer.name)}</b> ${employer.flag}</p>`
+            : coach.club
+            ? `<p>Entrenador de <b>${escapeHtml(coach.club.name)}</b> · ${escapeHtml(coach.club.leagueName)} · Rating ${coach.club.rating}</p><p class="muted">Presupuesto: ${fmtMoney(coach.club.budgetM)}</p>`
+            : '<p class="muted">Sin banco. Buscando una oportunidad.</p>'
+        }
+        <div class="attr-row" style="margin-top:8px"><div class="label">Reputación</div><div class="attr-bar"><span style="width:${coach.reputation}%"></span></div><div class="val">${Math.round(coach.reputation)}</div></div>
+      </div>
+      <div class="card">
+        <h3>Diario</h3>
+        ${renderFeed(game.feed)}
+      </div>
+      <div class="card">
+        <h3>Ofertas</h3>
+        ${
+          offers.length
+            ? offers
+                .map(
+                  (o) => `
+          <div class="card" style="margin-bottom:8px">
+            ${
+              o.type === 'nationalTeam'
+                ? `<div style="font-weight:700">Selección de ${escapeHtml(o.country.name)} ${o.country.flag}</div>`
+                : `<div style="font-weight:700">${escapeHtml(o.club.name)}</div><div class="muted">${escapeHtml(o.league)} · Rating ${o.club.rating}</div>`
+            }
+            <div class="row" style="margin-top:8px">
+              <button class="btn primary" data-accept-coach-offer="${o.id}" style="flex:1">Aceptar</button>
+              <button class="btn" data-reject-coach-offer="${o.id}" style="flex:1">Rechazar</button>
+            </div>
+          </div>`
+                )
+                .join('')
+            : '<p class="muted">No tienes ofertas este año.</p>'
+        }
+      </div>
+    </div>
+    <div class="advance-bar">
+      <button class="btn primary advance-btn" data-advance-coach-year ${busy ? 'disabled' : ''}>Avanzar temporada ▶</button>
+      <button class="btn block" style="margin-top:8px" data-retire-coach>Retirarte del banco</button>
+    </div>
+  `;
+}
+
+function attachCoachHandlers() {
+  const advanceBtn = app.querySelector('[data-advance-coach-year]');
+  if (advanceBtn) advanceBtn.addEventListener('click', handleAdvanceCoachYear);
+
+  app.querySelectorAll('[data-accept-coach-offer]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-accept-coach-offer');
+      const offer = game.coach.currentOffers.find((o) => o.id === id);
+      if (offer) {
+        const feedTexts = acceptCoachOffer(game, offer);
+        for (const t of feedTexts) pushFeed(game, t, 'event');
+      }
+      game.coach.currentOffers = [];
+      render();
+    });
+  });
+  app.querySelectorAll('[data-reject-coach-offer]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-reject-coach-offer');
+      rejectCoachOffer();
+      game.coach.currentOffers = game.coach.currentOffers.filter((o) => o.id !== id);
+      render();
+    });
+  });
+
+  const retireBtn = app.querySelector('[data-retire-coach]');
+  if (retireBtn) {
+    retireBtn.addEventListener('click', () => {
+      if (confirm('¿Seguro que querés retirarte del banco? No hay vuelta atrás.')) {
+        game.coach.retired = true;
+        game.coach.retirementReason = 'decision';
+        render();
+      }
+    });
+  }
+}
+
+async function handleAdvanceCoachYear() {
+  if (busy || game.coach.retired) return;
+  busy = true;
+  render();
+
+  const decisions = {};
+  if (game.coach.club && !game.coach.nationalTeamJob) {
+    decisions.tactic = await showModal({
+      title: 'Táctica de la temporada',
+      desc: '¿Con qué filosofía encarás esta temporada?',
+      options: [
+        { label: 'Ofensiva: ir por todo', value: 'ofensivo' },
+        { label: 'Equilibrada', value: 'equilibrado' },
+        { label: 'Defensiva: no perder el arco en cero', value: 'defensivo' },
+      ],
+    });
+    decisions.investment = await showModal({
+      title: 'Inversión del club',
+      desc: '¿En qué invertís el presupuesto de este año?',
+      options: [
+        { label: 'Cantera juvenil (crecimiento lento y barato)', value: 'cantera' },
+        { label: 'Fichajes estrella (caro, resultados rápidos)', value: 'fichajes' },
+        { label: 'Estabilidad financiera (ahorrar)', value: 'estabilidad' },
+      ],
+    });
+  }
+
+  const feedEntries = simulateCoachSeason(game, decisions);
+  for (const t of feedEntries) pushFeed(game, t, t.includes('🏆') ? 'rare' : 'event');
+
+  busy = false;
+  render();
+}
+
+function renderFinalLegacyScreen() {
+  const playerLegacy = computeLegacy(game);
+  const coachLegacy = computeCoachLegacy(game);
+  const summary = buildCareerSummary(game);
+  return `
+    <div class="screen">
+      <div class="rare-banner" style="margin-top:20px">
+        <div class="title">${escapeHtml(playerLegacy.title)} · ${escapeHtml(coachLegacy.title)}</div>
+        <div class="sub">${escapeHtml(coachLegacy.narrative)}</div>
+      </div>
+      <div class="card">
+        <h3>Carrera como jugador</h3>
+        <p class="muted">${escapeHtml(playerLegacy.narrative)}</p>
+        <div class="grid2" style="margin-top:8px">
+          <div class="stat-tile"><div class="n">${summary.goals}</div><div class="l">Goles</div></div>
+          <div class="stat-tile"><div class="n">${summary.trophies.length}</div><div class="l">Títulos jugador</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Carrera como entrenador</h3>
+        <div class="grid2">
+          <div class="stat-tile"><div class="n">${coachLegacy.seasons}</div><div class="l">Temporadas dirigidas</div></div>
+          <div class="stat-tile"><div class="n">${coachLegacy.titles}</div><div class="l">Títulos como DT</div></div>
+          <div class="stat-tile"><div class="n">${coachLegacy.reputation}</div><div class="l">Reputación final</div></div>
+        </div>
+        ${
+          game.coach.trophies.length
+            ? game.coach.trophies.map((t) => `<div class="row between"><span>${escapeHtml(t.name)}</span><span class="muted">${escapeHtml(t.withClub)} · ${t.year}</span></div>`).join('')
+            : ''
+        }
+      </div>
+      <div class="card col">
+        <h3>Semilla de esta carrera</h3>
+        <p><b>${escapeHtml(summary.seed)}</b></p>
+        <button class="btn primary block" data-export-final>Descargar historial (.json)</button>
+        <button class="btn block" data-new-career>Empezar una nueva carrera</button>
+      </div>
+    </div>
+  `;
 }
 
 function showTrainingModal() {
