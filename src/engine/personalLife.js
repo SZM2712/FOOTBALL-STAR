@@ -28,7 +28,7 @@ export function initPersonalLife(rng, confed) {
     divorces: 0,
     children: [],
     friends: { barrio: 60, vestuario: 55, fama: 30 },
-    vices: { alcohol: 0, gambling: 0, drugs: 0, addiction: null, rehabAttempts: 0, recovered: false },
+    vices: { alcohol: 0, gambling: 0, drugs: 0, dopaje: 0, dopajeCaught: false, dopajeRedeemed: false, addiction: null, rehabAttempts: 0, recovered: false },
     hobbies: [],
     reputation: 55,
     purchases: [],
@@ -510,7 +510,65 @@ const PERSONAL_EVENTS = {
       ],
     }),
   },
+
+  dopajeTentacion: {
+    eligible: (state) => !state.personalLife.vices.dopajeCaught && state.player.age <= 34,
+    chance: (state) => 0.05 + (state.player.form < 50 ? 0.03 : 0),
+    build: () => ({
+      id: 'dopajeTentacion',
+      title: 'Una oferta poco limpia',
+      desc: 'Un preparador poco escrupuloso te ofrece algo para rendir más este año. "Nadie lo va a notar", dice.',
+      options: [
+        {
+          label: 'Rechazar. Jugar limpio.',
+          run: (state) => {
+            state.personalLife.reputation = clamp(state.personalLife.reputation + 3);
+            return 'Rechazas la oferta. Duermes tranquilo esa noche.';
+          },
+        },
+        {
+          label: 'Aceptar el riesgo',
+          run: (state, rng) => {
+            const pl = state.personalLife;
+            pl.vices.dopaje += 1;
+            state.player.form = clamp(state.player.form + 15);
+            state.player.attrs.phy = clamp(state.player.attrs.phy + 3);
+            state.player.attrs.pac = clamp(state.player.attrs.pac + 2);
+            const caughtNow = rng.chance(0.22 + pl.vices.dopaje * 0.05);
+            if (caughtNow) {
+              pl.vices.dopajeCaught = true;
+              state.suspensionWeeks = (state.suspensionWeeks || 0) + rng.int(26, 52);
+              pl.reputation = clamp(pl.reputation - 35);
+              state.fame = clamp(state.fame - 20);
+              if (state.rareTracker.canStartNew() && !state.rareTracker.hasHad('CAIDA_LIBRE') && rng.chance(0.5)) {
+                state.rareTracker.start('CAIDA_LIBRE', state.year);
+                return 'Control antidopaje positivo. Todo se derrumba de golpe: sanción larga y tu nombre queda marcado. Caída Libre.';
+              }
+              return 'Control antidopaje positivo. Sanción larga y un golpe durísimo a tu reputación.';
+            }
+            return 'Aceptas el riesgo. Rindes mejor este año... y nadie parece haberse dado cuenta. Por ahora.';
+          },
+        },
+      ],
+    }),
+  },
 };
+
+/** Camino de redención tras un control antidopaje positivo: con tiempo y
+ * buen comportamiento, la reputación se puede reconstruir de a poco. */
+export function dopingRedemptionCheck(state, rng) {
+  const pl = state.personalLife;
+  if (!pl.vices.dopajeCaught || pl.vices.dopajeRedeemed) return null;
+  if (pl.reputation >= 55) {
+    pl.vices.dopajeRedeemed = true;
+    return 'Con años de trabajo limpio y resultados, la gente empieza a olvidar el episodio del dopaje. Historia de redención.';
+  }
+  if (rng.chance(0.15)) {
+    pl.reputation = clamp(pl.reputation + 5);
+    return 'Trabajás en silencio para reconstruir tu imagen tras el escándalo de dopaje.';
+  }
+  return null;
+}
 
 /** Se llama una sola vez por año, antes de simulateSeason (mismo patrón que
  * rollPressConferenceQuestion): decide de forma determinista si hay un

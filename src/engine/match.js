@@ -30,13 +30,59 @@ export function simulateTeamMatch(teamRating, oppRating, rng) {
 const GOAL_BIAS = { DEL: 0.85, MED: 0.32, DEF: 0.08, POR: 0.01 };
 const ASSIST_BIAS = { DEL: 0.28, MED: 0.6, DEF: 0.22, POR: 0.04 };
 
+// ---------------------------------------------------------------------------
+// Penales: una decisión real, no un dado ciego. La chance de que TE toque
+// patear depende de tu posición; una vez que te toca, vos elegís cómo.
+// ---------------------------------------------------------------------------
+const PENALTY_OPPORTUNITY_CHANCE = { DEL: 0.11, MED: 0.06, DEF: 0.02, POR: 0 };
+
+export function rollPenaltyOpportunity(player, rng) {
+  const p = PENALTY_OPPORTUNITY_CHANCE[player.position] || 0;
+  return rng.chance(p);
+}
+
+export const PENALTY_CHOICES = {
+  angulo: { label: 'Ángulo superior — arriesgado, casi imparable si entra', baseScore: 0.6, missBias: 0.7 },
+  medio: { label: 'Al medio, con potencia', baseScore: 0.72, missBias: 0.15 },
+  esquinaBaja: { label: 'Esquina baja ajustada — el más seguro', baseScore: 0.8, missBias: 0.25 },
+  vaselina: { label: 'Picadita / vaselina', baseScore: 0.58, missBias: 0.35, mentalityWeighted: true },
+  cederlo: { label: 'Cedérselo a un compañero', baseScore: 0.75, missBias: 0.5, delegate: true },
+};
+
+/** Resuelve un penal ya concedido. outcome: 'gol' | 'atajado' | 'errado'.
+ * Si delegate=true (se lo cede a un compañero), no cuenta como gol/atajada
+ * personal: solo afecta el marcador del equipo. */
+export function resolvePenalty(player, choiceId, rng) {
+  const choice = PENALTY_CHOICES[choiceId] || PENALTY_CHOICES.medio;
+  let scoreProb = choice.baseScore;
+  if (!choice.delegate) {
+    scoreProb += (player.attrs.sho - 60) / 300;
+    scoreProb += (player.attrs.men - 60) / 350;
+    if (choice.mentalityWeighted) scoreProb += (player.attrs.men - 60) / 200;
+  }
+  scoreProb = Math.max(0.25, Math.min(0.93, scoreProb));
+
+  const scored = rng.chance(scoreProb);
+  if (scored) return { scored: true, delegate: !!choice.delegate, outcome: 'gol' };
+  const missed = rng.chance(choice.missBias);
+  return { scored: false, delegate: !!choice.delegate, outcome: missed ? 'errado' : 'atajado' };
+}
+
+// ---------------------------------------------------------------------------
+// Tarjetas rojas: merecidas vs. injustas, con consecuencias distintas.
+// ---------------------------------------------------------------------------
+export function rollRedCardType(rng) {
+  return rng.chance(0.58) ? 'merecida' : 'injusta';
+}
+
 /**
  * Simula un partido de club/selección. matchCtx: { highPressure, competition, isFinal }
+ * penaltyChoice: id de PENALTY_CHOICES si esta jugada incluye un penal a favor.
  * Devuelve un resultado completo con estadísticas del jugador y eventos narrativos.
  */
-export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {}, tracker = null) {
+export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {}, tracker = null, penaltyChoice = null) {
   const diff = teamRating - oppRating;
-  const teamGoals = Math.max(0, poissonSample(rng, 1.35 + diff / 22));
+  let teamGoals = Math.max(0, poissonSample(rng, 1.35 + diff / 22));
   const oppGoals = Math.max(0, poissonSample(rng, 1.35 - diff / 22));
 
   const rating = overallRating(player);
@@ -56,13 +102,33 @@ export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {},
   const goalLambda = teamGoals * (GOAL_BIAS[player.position] || 0.1) * effectiveness * 0.55;
   const assistLambda = teamGoals * (ASSIST_BIAS[player.position] || 0.1) * effectiveness * 0.55;
 
-  const goals = Math.min(teamGoals + 1, poissonSample(rng, goalLambda));
+  let goals = Math.min(teamGoals + 1, poissonSample(rng, goalLambda));
   const assists = Math.min(4, poissonSample(rng, assistLambda));
 
+  let penalty = null;
+  if (penaltyChoice) {
+    penalty = resolvePenalty(player, penaltyChoice, rng);
+    if (penalty.scored) {
+      teamGoals += 1;
+      if (!penalty.delegate) goals += 1;
+    }
+  }
+
+  // missedPenalty (tanda de penales de una final) dispara La Maldición de
+  // forma garantizada: ya es un evento raro en sí (llegar a una final).
+  // pressurePenaltyMiss (penal errado en un partido de presión normal) es
+  // mucho más frecuente, así que su chance de disparar La Maldición se
+  // pondera aparte, en season.js, para no inflar ese estado raro.
   let missedPenalty = false;
   if (matchCtx.isFinal && matchCtx.penaltyShootout && rng.chance(0.18)) {
     missedPenalty = true;
   }
+  const pressurePenaltyMiss = !!(penalty && !penalty.scored && !penalty.delegate && matchCtx.highPressure);
+  if (pressurePenaltyMiss) {
+    missedPenalty = true;
+  }
+
+  const result = teamGoals > oppGoals ? 'win' : teamGoals === oppGoals ? 'draw' : 'loss';
 
   // rating de partido 1-10
   let base = 6.0;
@@ -87,18 +153,24 @@ export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {},
     missedPenalty,
   });
 
+  const red = rng.chance(0.012);
+  const redCardType = red ? rollRedCardType(rng) : null;
+
   return {
     teamGoals,
     oppGoals,
-    result: teamGoals > oppGoals ? 'win' : teamGoals === oppGoals ? 'draw' : 'loss',
+    result,
     goals,
     assists,
     matchRating,
     inZona,
+    penalty,
     missedPenalty,
+    pressurePenaltyMiss,
     injury,
     events,
     yellow: rng.chance(0.16),
-    red: rng.chance(0.012),
+    red,
+    redCardType,
   };
 }

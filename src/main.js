@@ -1,5 +1,6 @@
 import { createGame, serializeGame, deserializeGame, finishChildhood, pushFeed } from './state/gameState.js';
-import { startSeason, playNextMatch, finishSeason, isMatchdayPending, rollPressConferenceQuestion } from './engine/season.js';
+import { startSeason, playNextMatch, finishSeason, isMatchdayPending, rollPressConferenceQuestion, rollPenaltyOpportunityForMatch } from './engine/season.js';
+import { PENALTY_CHOICES } from './engine/match.js';
 import { rollNationalizationOpportunity } from './engine/nationalTeam.js';
 import { buyLuxury, LIFESTYLE_PACKAGES, rollPersonalLifeEvent } from './engine/personalLife.js';
 import { acceptOffer, rejectOffer, AGENT_TIERS, generateSponsorships } from './engine/transferMarket.js';
@@ -966,7 +967,18 @@ async function handlePlayNextMatch() {
   if (busy || game.retired) return;
   busy = true;
   render();
-  const feedEntries = playNextMatch(game);
+
+  const hasPenalty = rollPenaltyOpportunityForMatch(game);
+  let penaltyChoice = null;
+  if (hasPenalty) {
+    penaltyChoice = await showModal({
+      title: '¡Penal a tu favor!',
+      desc: '¿A dónde tirás?',
+      options: Object.entries(PENALTY_CHOICES).map(([id, c]) => ({ label: c.label, value: id })),
+    });
+  }
+
+  const feedEntries = playNextMatch(game, { penaltyChoice });
   busy = false;
   render();
   await showRareModals(feedEntries);
@@ -982,7 +994,8 @@ async function handleSimRestOfSeason() {
   render();
   let allFeed = [];
   while (isMatchdayPending(game)) {
-    allFeed = allFeed.concat(playNextMatch(game));
+    rollPenaltyOpportunityForMatch(game);
+    allFeed = allFeed.concat(playNextMatch(game, { penaltyChoice: 'medio' }));
   }
   busy = false;
   render();

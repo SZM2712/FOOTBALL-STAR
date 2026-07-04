@@ -1,7 +1,7 @@
 import { COUNTRY_BY_CODE } from '../data/countries.js';
 import { CLUB_CONTINENTAL_CUPS, BALLON_NAME, GOLDEN_BOOT_NAME } from '../data/clubs.js';
 import { growAttributes, overallRating, ATTR_KEYS, ATTR_LABELS } from './player.js';
-import { simulateMatch } from './match.js';
+import { simulateMatch, rollPenaltyOpportunity, PENALTY_CHOICES } from './match.js';
 import { PRESS_QUESTIONS } from './events.js';
 import { tryAnnualCareerStates, RARE_STATE_DEFS, narrativeFor } from './rareStates.js';
 import {
@@ -10,6 +10,7 @@ import {
   partyDecision,
   gamblingDecision,
   viceSpiralCheck,
+  dopingRedemptionCheck,
   illegalBettingEvent,
   HOBBIES,
   TRAVEL_OPTIONS,
@@ -189,6 +190,8 @@ export function startSeason(state, decisions = {}) {
   for (const m of partyDecision(state, rng, decisions.party || 'ninguna')) push(m, 'negative');
   for (const m of gamblingDecision(state, rng, decisions.gambling || 'no')) push(m, 'negative');
   for (const m of viceSpiralCheck(state, rng)) push(m, m.includes('Caída Libre') || m.includes('redención') ? 'rare' : 'negative');
+  const dopingRedemption = dopingRedemptionCheck(state, rng);
+  if (dopingRedemption) push(dopingRedemption, dopingRedemption.includes('redención') ? 'rare' : 'event');
   const illegal = illegalBettingEvent(state, rng);
   if (illegal) {
     push(illegal, 'rare');
@@ -246,9 +249,26 @@ export function startSeason(state, decisions = {}) {
   return feed;
 }
 
+/** Se llama ANTES de playNextMatch (misma idea que rollPressConferenceQuestion):
+ * decide de forma determinista si el próximo partido incluye un penal a tu
+ * favor, para que la UI pueda mostrar la decisión de dónde patear antes de
+ * resolver el partido. Guarda el resultado en pendingSeason.pendingPenalty. */
+export function rollPenaltyOpportunityForMatch(state) {
+  const ps = state.pendingSeason;
+  if (!ps || ps.matchIndex >= ps.matchesInSeason || ps.weeksOut > 0) {
+    if (ps) ps.pendingPenalty = false;
+    return false;
+  }
+  const has = rollPenaltyOpportunity(state.player, state.rng);
+  ps.pendingPenalty = has;
+  return has;
+}
+
 /** Simula exactamente el próximo partido de la temporada en curso (requiere
- * haber llamado startSeason antes). Devuelve el feed de ese partido. */
-export function playNextMatch(state) {
+ * haber llamado startSeason antes). decisions.penaltyChoice: id de
+ * PENALTY_CHOICES si rollPenaltyOpportunityForMatch marcó que hay penal.
+ * Devuelve el feed de ese partido. */
+export function playNextMatch(state, decisions = {}) {
   const ps = state.pendingSeason;
   if (!ps || ps.matchIndex >= ps.matchesInSeason) return [];
   const rng = state.rng;
@@ -267,7 +287,9 @@ export function playNextMatch(state) {
       competition: ps.leagueSystem.leagueName,
       fatigue: Math.min(1, m / ps.matchesInSeason),
     };
-    const result = simulateMatch(state.player, state.club.rating, opp.rating, rng, matchCtx, state.rareTracker);
+    const penaltyChoice = ps.pendingPenalty ? decisions.penaltyChoice || 'medio' : null;
+    const result = simulateMatch(state.player, state.club.rating, opp.rating, rng, matchCtx, state.rareTracker, penaltyChoice);
+    ps.pendingPenalty = false;
 
     ps.seasonStats.matches++;
     ps.seasonStats.goals += result.goals;
@@ -282,9 +304,28 @@ export function playNextMatch(state) {
     if (result.red) ps.seasonStats.red++;
     state.player.recentRatings = (state.player.recentRatings || []).concat(result.matchRating).slice(-10);
 
+    if (result.penalty) {
+      const label = PENALTY_CHOICES[penaltyChoice]?.label || 'al medio';
+      if (result.penalty.delegate) {
+        push(`Penal a favor: se lo cedés a un compañero. ${result.penalty.scored ? 'Anota.' : 'Falla.'}`, 'event');
+      } else if (result.penalty.outcome === 'gol') {
+        push(`Penal a favor. Elegís "${label}"... ¡GOL!`, 'event');
+      } else if (result.penalty.outcome === 'atajado') {
+        push(`Penal a favor. Elegís "${label}"... el arquero adivina y ataja.`, 'negative');
+      } else {
+        push(`Penal a favor. Elegís "${label}"... la pelota se va afuera.`, 'negative');
+      }
+    }
+
     const resultChar = result.result === 'win' ? 'W' : result.result === 'draw' ? 'E' : 'P';
+    const personalBits = [];
+    if (result.goals > 0) personalBits.push(`⚽x${result.goals}`);
+    if (result.assists > 0) personalBits.push(`🅰️x${result.assists}`);
+    if (result.yellow) personalBits.push('🟨');
+    if (result.red) personalBits.push('🟥');
+    const personalSuffix = personalBits.length ? ` — ${personalBits.join(' ')}` : '';
     push(
-      `J${m + 1}${matchCtx.highPressure ? ' 🔥' : ''}: ${state.club.name} ${result.teamGoals}-${result.oppGoals} ${opp.name} (${resultChar})`,
+      `J${m + 1}${matchCtx.highPressure ? ' 🔥' : ''}: ${state.club.name} ${result.teamGoals}-${result.oppGoals} ${opp.name} (${resultChar})${personalSuffix}`,
       result.result === 'loss' ? 'negative' : 'normal'
     );
 
@@ -295,7 +336,28 @@ export function playNextMatch(state) {
       for (const ev of result.events) push(ev.text, 'event');
     }
 
-    if (result.missedPenalty && state.rareTracker.canStartNew() && !state.rareTracker.hasHad('LA_MALDICION')) {
+    if (result.red) {
+      if (result.redCardType === 'merecida') {
+        state.player.morale = clamp(state.player.morale - 6);
+        state.personalLife.reputation = clamp(state.personalLife.reputation - 4);
+        push('Expulsión merecida: una entrada imprudente que el árbitro no puede dejar pasar.', 'negative');
+      } else {
+        state.player.morale = clamp(state.player.morale - 2);
+        state.personalLife.reputation = clamp(state.personalLife.reputation + 2);
+        push('Expulsión injusta: el árbitro se equivoca y la prensa te respalda.', 'negative');
+      }
+    }
+
+    // La tanda de una final es de por sí un evento raro (llegar a la final):
+    // dispara La Maldición garantizado. Un penal errado en un partido de
+    // presión normal es mucho más frecuente, así que solo una fracción de
+    // esas fallas se vuelve el inicio de La Maldición.
+    const maldicionEligible = state.rareTracker.canStartNew() && !state.rareTracker.hasHad('LA_MALDICION');
+    if (maldicionEligible && result.missedPenalty && !result.pressurePenaltyMiss) {
+      state.rareTracker.start('LA_MALDICION', state.year);
+      state.rareTracker.signal('pressureFailures');
+      push('Fallas un penal decisivo en la tanda de una final. La Maldición ha comenzado.', 'rare');
+    } else if (maldicionEligible && result.pressurePenaltyMiss && rng.chance(0.18)) {
       state.rareTracker.start('LA_MALDICION', state.year);
       state.rareTracker.signal('pressureFailures');
       push('Fallas un penal decisivo en un partido de máxima presión. La Maldición ha comenzado.', 'rare');
@@ -542,7 +604,8 @@ export function simulateSeason(state, decisions = {}) {
   const feed = [];
   feed.push(...startSeason(state, decisions));
   while (isMatchdayPending(state)) {
-    feed.push(...playNextMatch(state));
+    rollPenaltyOpportunityForMatch(state);
+    feed.push(...playNextMatch(state, decisions));
   }
   feed.push(...finishSeason(state, decisions));
   return feed;
