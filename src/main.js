@@ -1,5 +1,15 @@
 import { createGame, serializeGame, deserializeGame, finishChildhood, pushFeed } from './state/gameState.js';
-import { startSeason, playNextMatch, finishSeason, isMatchdayPending, rollPressConferenceQuestion, rollPenaltyOpportunityForMatch } from './engine/season.js';
+import {
+  startSeason,
+  playNextMatch,
+  finishSeason,
+  isMatchdayPending,
+  rollPressConferenceQuestion,
+  rollPenaltyOpportunityForMatch,
+  hasPendingSubReaction,
+  resolveSubReaction,
+  SUB_REACTIONS,
+} from './engine/season.js';
 import { PENALTY_CHOICES } from './engine/match.js';
 import { rollNationalizationOpportunity } from './engine/nationalTeam.js';
 import { buyLuxury, LIFESTYLE_PACKAGES, rollPersonalLifeEvent } from './engine/personalLife.js';
@@ -17,7 +27,7 @@ import {
   rejectCoachOffer,
   computeCoachLegacy,
 } from './engine/coachCareer.js';
-import { showModal, showInfoModal, escapeHtml } from './ui/modal.js';
+import { showModal, showInfoModal, showMatchSummary, escapeHtml } from './ui/modal.js';
 import { renderPlayerCard } from './ui/components/playerCard.js';
 import { renderAttributeBars } from './ui/components/attributeBars.js';
 import { renderFeed } from './ui/components/feed.js';
@@ -33,6 +43,14 @@ function fmtMoney(m) {
   if (m == null || Number.isNaN(m)) return '€0';
   if (Math.abs(m) >= 1) return `€${m.toFixed(1)}M`;
   return `€${Math.max(0, Math.round(m * 1000))}k`;
+}
+
+function relationshipLabel(v) {
+  if (v >= 80) return 'Excelente';
+  if (v >= 60) return 'Buena';
+  if (v >= 40) return 'Tensa';
+  if (v >= 20) return 'Mala';
+  return 'Rota';
 }
 
 function render() {
@@ -296,7 +314,7 @@ function renderLeagueTableCard(table) {
           </tbody>
         </table>
       </div>
-      <p class="muted" style="margin-top:6px">Tabla de fin de temporada (año ${table.year}). Tu fila usa tus resultados reales; el resto es una aproximación de la división.</p>
+      <p class="muted" style="margin-top:6px">Temporada ${table.year}: toda la división se juega jornada a jornada, la tabla se actualiza en vivo con cada partido.</p>
     </div>
   `;
 }
@@ -316,7 +334,8 @@ function renderMercadoTab() {
         </div>
         <div class="pill accent">${fmtMoney(game.contract.salaryM)}/año</div>
       </div>
-      <p class="muted" style="margin-top:6px">Contrato: ${game.contract.years} año${game.contract.years === 1 ? '' : 's'} restante${game.contract.years === 1 ? '' : 's'} · Cláusula ${fmtMoney(game.contract.clauseM)}</p>`
+      <p class="muted" style="margin-top:6px">Contrato: ${game.contract.years} año${game.contract.years === 1 ? '' : 's'} restante${game.contract.years === 1 ? '' : 's'} · Cláusula ${fmtMoney(game.contract.clauseM)}</p>
+      <p class="muted" style="margin-top:6px">Relación con el entrenador: ${relationshipLabel(game.managerRelationship)} (${Math.round(game.managerRelationship)}/100)</p>`
           : `<p class="muted">Eres agente libre. No tienes club ni contrato: elige una de las ofertas de abajo para volver a competir.</p>`
       }
     </div>
@@ -981,7 +1000,15 @@ async function handlePlayNextMatch() {
   const feedEntries = playNextMatch(game, { penaltyChoice });
   busy = false;
   render();
-  await showRareModals(feedEntries);
+
+  const reactionOptions = hasPendingSubReaction(game)
+    ? Object.entries(SUB_REACTIONS).map(([id, r]) => ({ label: r.label, value: id }))
+    : null;
+  const reaction = await showMatchSummary({ lines: feedEntries, reactionOptions });
+  if (reaction) {
+    resolveSubReaction(game, reaction);
+    render();
+  }
 
   if (!isMatchdayPending(game)) {
     await handleCloseSeason();
@@ -996,6 +1023,9 @@ async function handleSimRestOfSeason() {
   while (isMatchdayPending(game)) {
     rollPenaltyOpportunityForMatch(game);
     allFeed = allFeed.concat(playNextMatch(game, { penaltyChoice: 'medio' }));
+    if (hasPendingSubReaction(game)) {
+      allFeed = allFeed.concat(resolveSubReaction(game, 'calma'));
+    }
   }
   busy = false;
   render();

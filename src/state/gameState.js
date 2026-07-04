@@ -34,6 +34,7 @@ export function createGame(seed) {
     player: null,
     club: null,
     contract: null,
+    managerRelationship: 55,
     agent: { tier: 'familiar' },
     money: 0.02,
     peakMoney: 0.02,

@@ -45,13 +45,20 @@ function closestByRating(clubs, rating) {
   return clubs.reduce((best, c) => (Math.abs(c.rating - rating) < Math.abs(best.rating - rating) ? c : best), clubs[0]);
 }
 
-/** Decide si el club quiere renovarte cuando el contrato llega a su fin. */
-function renewalChance(player, club, rating) {
+function clamp(v, min = 0, max = 100) {
+  return Math.max(min, Math.min(max, v));
+}
+
+/** Decide si el club quiere renovarte cuando el contrato llega a su fin.
+ * La relación con el entrenador pesa: si te llevás mal, el club es mucho
+ * más propenso a dejarte ir aunque tu nivel futbolístico lo justifique. */
+function renewalChance(player, club, rating, managerRelationship = 55) {
   let p = 0.82;
   if (player.age >= 35) p -= 0.3;
   else if (player.age >= 31) p -= 0.1;
   if (rating < club.rating - 12) p -= 0.25;
   else if (rating >= club.rating + 5) p += 0.1;
+  p += (managerRelationship - 55) / 150;
   return Math.max(0.1, Math.min(0.96, p));
 }
 
@@ -61,7 +68,7 @@ function renewalChance(player, club, rating) {
 export function attemptContractRenewal(state, rng) {
   if (!state.club || !state.contract) return null;
   const rating = overallRating(state.player);
-  const wantsRenew = rng.chance(renewalChance(state.player, state.club, rating));
+  const wantsRenew = rng.chance(renewalChance(state.player, state.club, rating, state.managerRelationship));
 
   if (wantsRenew) {
     const valueM = estimateValueM(state);
@@ -69,16 +76,32 @@ export function attemptContractRenewal(state, rng) {
     const salaryM = Math.max(0.02, Math.round((valueM / 4) * rng.range(0.85, 1.3) * 100) / 100);
     const clauseM = Math.round(valueM * rng.range(1.4, 2.2) * 10) / 10;
     state.contract = { salaryM, years, clauseM };
+    state.managerRelationship = clamp(state.managerRelationship + 10);
     return { renewed: true, text: `Renuevas tu contrato con ${state.club.name} por ${years} años más.` };
   }
 
   const clubName = state.club.name;
   state.club = null;
   state.contract = null;
+  state.managerRelationship = 55;
   return {
     renewed: false,
     text: `Tu contrato con ${clubName} llega a su fin y el club decide no renovarte. Eres agente libre: tendrás que buscar equipo en el mercado.`,
   };
+}
+
+/** Chequeo aparte de la renovación: si la relación con el cuerpo técnico
+ * está muy deteriorada, el club puede prescindir de vos aunque el contrato
+ * todavía tenga años por delante (venta o rescisión anticipada). */
+export function checkForcedTransferListing(state, rng) {
+  if (!state.club || !state.contract) return null;
+  if (state.managerRelationship > 25) return null;
+  if (!rng.chance(0.22)) return null;
+  const clubName = state.club.name;
+  state.club = null;
+  state.contract = null;
+  state.managerRelationship = 55;
+  return `Tu relación con el cuerpo técnico de ${clubName} se rompió: el club decide prescindir de vos antes de que termine tu contrato.`;
 }
 
 /** Genera ofertas de fichaje coherentes con nivel/edad/liga del jugador. */
@@ -148,6 +171,7 @@ export function acceptOffer(state, offer) {
   state.contract = { salaryM: offer.wageM, years: offer.years, clauseM: offer.clauseM };
   state.rareTracker.profile.seasonsAtCurrentClub = 0;
   state.transferredThisYear = true;
+  state.managerRelationship = 55;
 
   const feed = [`Fichaje: ${state.player.name} firma por ${offer.club.name} (${offer.league}).`];
 

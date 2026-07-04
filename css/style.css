@@ -269,6 +269,7 @@ p { margin: 0; color: var(--text-dim); line-height: 1.5; }
 @media (min-width: 640px) { .modal { border-radius: 18px; } }
 .modal h2 { font-size: 18px; }
 .modal .desc { font-size: 13.5px; color: var(--text-dim); }
+.match-summary-feed { max-height: 48vh; overflow-y: auto; gap: 8px; }
 
 /* ---------- Rare state banner ---------- */
 .rare-banner {

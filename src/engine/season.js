@@ -1,7 +1,7 @@
 import { COUNTRY_BY_CODE } from '../data/countries.js';
 import { CLUB_CONTINENTAL_CUPS, BALLON_NAME, GOLDEN_BOOT_NAME } from '../data/clubs.js';
 import { growAttributes, overallRating, ATTR_KEYS, ATTR_LABELS } from './player.js';
-import { simulateMatch, rollPenaltyOpportunity, PENALTY_CHOICES } from './match.js';
+import { simulateMatch, simulateTeamMatch, rollPenaltyOpportunity, PENALTY_CHOICES } from './match.js';
 import { PRESS_QUESTIONS } from './events.js';
 import { tryAnnualCareerStates, RARE_STATE_DEFS, narrativeFor } from './rareStates.js';
 import {
@@ -15,7 +15,7 @@ import {
   HOBBIES,
   TRAVEL_OPTIONS,
 } from './personalLife.js';
-import { getLeagueSystem, generateOffers, attemptContractRenewal } from './transferMarket.js';
+import { getLeagueSystem, generateOffers, attemptContractRenewal, checkForcedTransferListing } from './transferMarket.js';
 import { payYearlySalary } from './finance.js';
 import {
   isWorldCupYear,
@@ -54,50 +54,82 @@ export function rollPressConferenceQuestion(state) {
 }
 
 /**
- * Construye una tabla de posiciones de la división del jugador: su fila usa
- * los resultados reales de la temporada recién jugada; el resto de los
- * clubes se aproxima estadísticamente a partir de su rating relativo (no se
- * simula partido a partido entre rivales, alcanza para que la tabla se vea
- * coherente sin duplicar el costo de simular toda la división).
+ * Genera un calendario de todos-contra-todos (ida y vuelta) para los clubes
+ * de una división, con el método del círculo: n-1 jornadas para la ida,
+ * las mismas jornadas invertidas para la vuelta. Cada jornada es un array de
+ * pares [clubA, clubB]; el jugador está en exactamente un par por jornada.
  */
-export function buildLeagueTable(state, leagueSystem, division, seasonStats, rng) {
-  const clubs = division.clubs;
-  const matchesPerClub = seasonStats.matches || Math.max(10, (clubs.length - 1) * 2);
+function generateRoundRobinSchedule(clubs, rng) {
+  const teams = rng.shuffle(clubs.slice());
+  const n = teams.length;
+  const fixed = teams[0];
+  let rotating = teams.slice(1);
+  const half = n / 2;
+  const firstLeg = [];
+  for (let r = 0; r < n - 1; r++) {
+    const current = [fixed, ...rotating];
+    const pairs = [];
+    for (let j = 0; j < half; j++) pairs.push([current[j], current[n - 1 - j]]);
+    firstLeg.push(pairs);
+    rotating.unshift(rotating.pop());
+  }
+  const secondLeg = firstLeg.map((pairs) => pairs.map(([a, b]) => [b, a]));
+  return [...firstLeg, ...secondLeg];
+}
 
-  const rows = clubs
-    .filter((c) => c.id !== state.club.id)
-    .map((c) => {
-      const better = clubs.filter((o) => o.rating > c.rating).length;
-      const percentile = 1 - better / Math.max(1, clubs.length - 1);
-      const expectedPPG = 1.0 + percentile * 1.3;
-      const ppg = Math.max(0, Math.min(3, expectedPPG + rng.gaussian(0, 0.35)));
-      const draws = Math.round(matchesPerClub * rng.range(0.18, 0.32));
-      const remaining = Math.max(0, matchesPerClub - draws);
-      const points = Math.round(ppg * matchesPerClub);
-      const wins = Math.max(0, Math.min(remaining, Math.round((points - draws) / 3)));
-      const losses = Math.max(0, matchesPerClub - draws - wins);
-      const gf = Math.max(0, Math.round((1.1 + percentile * 0.9) * matchesPerClub * rng.range(0.85, 1.15)));
-      const ga = Math.max(0, Math.round((1.5 - percentile * 0.9) * matchesPerClub * rng.range(0.85, 1.15)));
-      return { id: c.id, name: c.name, played: matchesPerClub, wins, draws, losses, gf, ga, points: wins * 3 + draws, isPlayer: false };
-    });
+function emptyTableStats(clubs) {
+  const stats = {};
+  for (const c of clubs) {
+    stats[c.id] = { id: c.id, name: c.name, played: 0, wins: 0, draws: 0, losses: 0, gf: 0, ga: 0, points: 0 };
+  }
+  return stats;
+}
 
-  rows.push({
-    id: state.club.id,
-    name: state.club.name,
-    played: seasonStats.matches,
-    wins: seasonStats.wins,
-    draws: seasonStats.draws,
-    losses: seasonStats.losses,
-    gf: seasonStats.teamGoalsFor,
-    ga: seasonStats.teamGoalsAgainst,
-    points: seasonStats.wins * 3 + seasonStats.draws,
-    isPlayer: true,
-  });
+/** Acumula el resultado de un partido (a vs b) en la tabla en vivo. */
+function updateTableStats(tableStats, aId, bId, aGoals, bGoals) {
+  const a = tableStats[aId];
+  const b = tableStats[bId];
+  if (!a || !b) return;
+  a.played++;
+  b.played++;
+  a.gf += aGoals;
+  a.ga += bGoals;
+  b.gf += bGoals;
+  b.ga += aGoals;
+  if (aGoals > bGoals) {
+    a.wins++;
+    a.points += 3;
+    b.losses++;
+  } else if (aGoals < bGoals) {
+    b.wins++;
+    b.points += 3;
+    a.losses++;
+  } else {
+    a.draws++;
+    b.draws++;
+    a.points += 1;
+    b.points += 1;
+  }
+}
 
+/** Convierte la tabla en vivo (acumulada jornada a jornada) al formato que
+ * consume la UI, ordenada por puntos y diferencia de gol. */
+function buildLiveLeagueTable(state, ps) {
+  const rows = Object.values(ps.tableStats).map((s) => ({
+    id: s.id,
+    name: s.name,
+    played: s.played,
+    wins: s.wins,
+    draws: s.draws,
+    losses: s.losses,
+    gf: s.gf,
+    ga: s.ga,
+    points: s.points,
+    isPlayer: s.id === state.club.id,
+  }));
   rows.sort((a, b) => b.points - a.points || (b.gf - b.ga) - (a.gf - a.ga) || b.gf - a.gf);
   rows.forEach((r, i) => (r.position = i + 1));
-
-  return { leagueName: leagueSystem.leagueName, divisionLabel: division.label, year: state.year, rows };
+  return { leagueName: ps.leagueSystem.leagueName, divisionLabel: ps.division.label, year: state.year, rows };
 }
 
 function emptySeasonStats() {
@@ -227,19 +259,21 @@ export function startSeason(state, decisions = {}) {
   } else if (!state.retired && state.club) {
     const leagueSystem = getLeagueSystem(state, state.club.countryCode);
     const division = leagueSystem.divisions[state.club.division] || leagueSystem.divisions[0];
-    const matchesInSeason = Math.max(10, (division.clubs.length - 1) * 2);
+    const schedule = generateRoundRobinSchedule(division.clubs, rng);
     hasMatches = true;
     state.pendingSeason = {
       trainingBonus,
       matchIndex: 0,
-      matchesInSeason,
+      matchesInSeason: schedule.length,
       leagueSystem,
       division,
-      rivalPool: division.clubs.filter((c) => c.id !== state.club.id),
+      schedule,
+      tableStats: emptyTableStats(division.clubs),
       seasonStats: emptySeasonStats(),
       weeksOut: Math.ceil(state.suspensionWeeks || 0),
     };
     state.suspensionWeeks = 0;
+    state.leagueTable = buildLiveLeagueTable(state, state.pendingSeason);
   }
   if (!hasMatches) {
     state.pendingSeason = { trainingBonus, matchIndex: 0, matchesInSeason: 0, seasonStats: emptySeasonStats() };
@@ -276,12 +310,26 @@ export function playNextMatch(state, decisions = {}) {
   const push = (text, type = 'normal') => feed.push({ text, type });
   const m = ps.matchIndex;
 
+  // ---- Resto de la división: se simula la jornada completa para que la
+  // tabla se actualice en vivo, no solo la fila del jugador. ----
+  const round = ps.schedule[m];
+  let opp = null;
+  for (const [a, b] of round) {
+    if (a.id === state.club.id) opp = b;
+    else if (b.id === state.club.id) opp = a;
+    else {
+      const r = simulateTeamMatch(a.rating, b.rating, rng);
+      updateTableStats(ps.tableStats, a.id, b.id, r.teamGoals, r.oppGoals);
+    }
+  }
+
   if (ps.weeksOut > 0) {
     ps.weeksOut -= 2;
-    push(`J${m + 1}: sigues de baja, no viajas con el plantel.`, 'negative');
+    const r = simulateTeamMatch(state.club.rating, opp.rating, rng);
+    updateTableStats(ps.tableStats, state.club.id, opp.id, r.teamGoals, r.oppGoals);
+    push(`J${m + 1}: sigues de baja, no viajas con el plantel (${state.club.name} ${r.teamGoals}-${r.oppGoals} ${opp.name}).`, 'negative');
   } else {
     const isLateSeason = m >= ps.matchesInSeason - 3;
-    const opp = rng.pick(ps.rivalPool.length ? ps.rivalPool : ps.division.clubs);
     const matchCtx = {
       highPressure: isLateSeason && rng.chance(0.45),
       competition: ps.leagueSystem.leagueName,
@@ -290,6 +338,7 @@ export function playNextMatch(state, decisions = {}) {
     const penaltyChoice = ps.pendingPenalty ? decisions.penaltyChoice || 'medio' : null;
     const result = simulateMatch(state.player, state.club.rating, opp.rating, rng, matchCtx, state.rareTracker, penaltyChoice);
     ps.pendingPenalty = false;
+    updateTableStats(ps.tableStats, state.club.id, opp.id, result.teamGoals, result.oppGoals);
 
     ps.seasonStats.matches++;
     ps.seasonStats.goals += result.goals;
@@ -377,9 +426,57 @@ export function playNextMatch(state, decisions = {}) {
     } else {
       state.player.monthsSinceInjury = (state.player.monthsSinceInjury || 0) + 1;
     }
+
+    // ---- Sustitución: si el partido va mal, el DT te puede sacar antes de
+    // tiempo. Cómo reaccionás (reclamo/calma) se resuelve aparte, con
+    // resolveSubReaction, para que la UI pueda mostrar la elección. ----
+    const canBeSubbed = !result.red && !result.inZona;
+    if (canBeSubbed) {
+      const subProb = result.matchRating <= 5.6 ? 0.32 : result.matchRating <= 6.6 ? 0.1 : 0.02;
+      if (rng.chance(subProb)) {
+        ps.pendingSubReaction = { matchIndex: m };
+        push('Te sacan del campo antes de tiempo. El entrenador no está conforme con tu partido.', 'event');
+      }
+    }
   }
 
   ps.matchIndex++;
+  state.leagueTable = buildLiveLeagueTable(state, ps);
+  flushFeed(state, feed);
+  return feed;
+}
+
+/** true si el partido recién jugado te sacó del campo y falta resolver tu
+ * reacción (reclamo/calma) antes de seguir con la temporada. */
+export function hasPendingSubReaction(state) {
+  return !!state.pendingSeason?.pendingSubReaction;
+}
+
+export const SUB_REACTIONS = {
+  reclamar: { label: 'Reclamarle al entrenador', managerD: -10, moraleD: 4 },
+  calma: { label: 'Aceptarlo con profesionalismo', managerD: 6, moraleD: -1 },
+};
+
+/** Resuelve la reacción del jugador a haber sido sustituido: afecta la
+ * relación con el entrenador (y, con ella, tus chances de renovación) y la
+ * moral. No consume rng: se puede llamar en cualquier momento después de
+ * playNextMatch sin afectar la paridad de la simulación por lotes. */
+export function resolveSubReaction(state, choiceId) {
+  const ps = state.pendingSeason;
+  if (!ps || !ps.pendingSubReaction) return [];
+  const choice = SUB_REACTIONS[choiceId] || SUB_REACTIONS.calma;
+  state.managerRelationship = clamp(state.managerRelationship + choice.managerD);
+  state.player.morale = clamp(state.player.morale + choice.moraleD);
+  ps.pendingSubReaction = null;
+  const feed = [
+    {
+      text:
+        choiceId === 'reclamar'
+          ? 'Le reclamás al entrenador en pleno vestuario. Te desahogás, pero la relación se resiente.'
+          : 'Te lo tomás con calma y profesionalismo. El cuerpo técnico lo valora.',
+      type: choiceId === 'reclamar' ? 'negative' : 'event',
+    },
+  ];
   flushFeed(state, feed);
   return feed;
 }
@@ -405,7 +502,6 @@ export function finishSeason(state, decisions = {}) {
   const seasonStats = ps.seasonStats;
 
   if (!state.retired && state.club && ps.leagueSystem) {
-    const { leagueSystem, division } = ps;
     const avgRating = seasonStats.ratings.length
       ? seasonStats.ratings.reduce((a, b) => a + b, 0) / seasonStats.ratings.length
       : 6.0;
@@ -434,8 +530,6 @@ export function finishSeason(state, decisions = {}) {
     state.fame = clamp(
       state.fame + seasonStats.goals * 0.6 + seasonStats.assists * 0.3 + (avgRating - 6) * 3 + state.club.prestige / 40
     );
-
-    state.leagueTable = buildLeagueTable(state, leagueSystem, division, seasonStats, rng);
 
     // ---- Copa continental de clubes ----
     if (state.club.prestige >= 55 && rng.chance(0.55)) {
@@ -571,6 +665,12 @@ export function finishSeason(state, decisions = {}) {
   payYearlySalary(state);
   state.peakMoney = Math.max(state.peakMoney, state.money);
 
+  // ---- Relación con el cuerpo técnico rota: venta o salida anticipada ----
+  if (state.club && state.contract && state.contract.years > 0) {
+    const forcedOut = checkForcedTransferListing(state, rng);
+    if (forcedOut) push(forcedOut, 'negative');
+  }
+
   // ---- Vencimiento de contrato ----
   if (state.club && state.contract) {
     state.contract.years -= 1;
@@ -606,6 +706,9 @@ export function simulateSeason(state, decisions = {}) {
   while (isMatchdayPending(state)) {
     rollPenaltyOpportunityForMatch(state);
     feed.push(...playNextMatch(state, decisions));
+    if (hasPendingSubReaction(state)) {
+      feed.push(...resolveSubReaction(state, decisions.subReactionChoice || 'calma'));
+    }
   }
   feed.push(...finishSeason(state, decisions));
   return feed;
