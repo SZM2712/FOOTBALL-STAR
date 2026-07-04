@@ -51,14 +51,17 @@ export const PENALTY_CHOICES = {
 
 /** Resuelve un penal ya concedido. outcome: 'gol' | 'atajado' | 'errado'.
  * Si delegate=true (se lo cede a un compañero), no cuenta como gol/atajada
- * personal: solo afecta el marcador del equipo. */
-export function resolvePenalty(player, choiceId, rng) {
+ * personal: solo afecta el marcador del equipo. timingQuality (0-1, default
+ * 0.5 = neutro) viene del minijuego de tiempo: acertar el timing suma sobre
+ * la elección de dónde patear, fallarlo resta. */
+export function resolvePenalty(player, choiceId, rng, timingQuality = 0.5) {
   const choice = PENALTY_CHOICES[choiceId] || PENALTY_CHOICES.medio;
   let scoreProb = choice.baseScore;
   if (!choice.delegate) {
     scoreProb += (player.attrs.sho - 60) / 300;
     scoreProb += (player.attrs.men - 60) / 350;
     if (choice.mentalityWeighted) scoreProb += (player.attrs.men - 60) / 200;
+    scoreProb += (timingQuality - 0.5) * 0.3;
   }
   scoreProb = Math.max(0.25, Math.min(0.93, scoreProb));
 
@@ -66,6 +69,33 @@ export function resolvePenalty(player, choiceId, rng) {
   if (scored) return { scored: true, delegate: !!choice.delegate, outcome: 'gol' };
   const missed = rng.chance(choice.missBias);
   return { scored: false, delegate: !!choice.delegate, outcome: missed ? 'errado' : 'atajado' };
+}
+
+// ---------------------------------------------------------------------------
+// Grandes ocasiones de gol en juego (no penales): la chance de que se te dé
+// una depende de tu posición; una vez que aparece, un minijuego de tiempo
+// (afuera, en la UI) decide qué tan bien la definís.
+// ---------------------------------------------------------------------------
+const BIG_CHANCE_OPPORTUNITY_CHANCE = { DEL: 0.24, MED: 0.14, DEF: 0.05, POR: 0.01 };
+
+export function rollBigChanceOpportunity(player, rng) {
+  const p = BIG_CHANCE_OPPORTUNITY_CHANCE[player.position] || 0;
+  return rng.chance(p);
+}
+
+/** Resuelve una gran ocasión ya concedida. shotQuality (0-1) viene del
+ * minijuego de tiempo: 0.5 es un remate promedio, 1 es timing perfecto, 0 es
+ * pifiarla por completo. outcome: 'gol' | 'atajado' | 'errado'. */
+export function resolveBigChance(player, shotQuality, rng) {
+  let scoreProb = 0.22 + shotQuality * 0.5;
+  scoreProb += (player.attrs.sho - 60) / 260;
+  scoreProb += (player.attrs.dri - 60) / 400;
+  scoreProb = Math.max(0.06, Math.min(0.92, scoreProb));
+
+  const scored = rng.chance(scoreProb);
+  if (scored) return { scored: true, outcome: 'gol' };
+  const wide = rng.chance(Math.max(0.15, 0.55 - shotQuality * 0.3));
+  return { scored: false, outcome: wide ? 'errado' : 'atajado' };
 }
 
 // ---------------------------------------------------------------------------
@@ -83,9 +113,22 @@ export function rollRedCardType(rng) {
  * readinessBonus: cómo te preparaste mentalmente para tu chance desde el
  * banco (ver rollBenchChallenge en season.js), sube o baja tu efectividad.
  * penaltyChoice: id de PENALTY_CHOICES si esta jugada incluye un penal a favor.
+ * penaltyTimingQuality: 0-1 del minijuego de tiempo del penal (0.5=neutro).
+ * bigChanceQuality: si rollBigChanceOpportunity dio true, 0-1 del minijuego
+ * de tiempo del remate (viene de la UI, no es un dado ciego).
  * Devuelve un resultado completo con estadísticas del jugador y eventos narrativos.
  */
-export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {}, tracker = null, penaltyChoice = null) {
+export function simulateMatch(
+  player,
+  teamRating,
+  oppRating,
+  rng,
+  matchCtx = {},
+  tracker = null,
+  penaltyChoice = null,
+  penaltyTimingQuality = 0.5,
+  bigChanceQuality = null
+) {
   const diff = teamRating - oppRating;
   let teamGoals = Math.max(0, poissonSample(rng, 1.35 + diff / 22));
   const oppGoals = Math.max(0, poissonSample(rng, 1.35 - diff / 22));
@@ -115,10 +158,19 @@ export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {},
 
   let penalty = null;
   if (penaltyChoice) {
-    penalty = resolvePenalty(player, penaltyChoice, rng);
+    penalty = resolvePenalty(player, penaltyChoice, rng, penaltyTimingQuality);
     if (penalty.scored) {
       teamGoals += 1;
       if (!penalty.delegate) goals += 1;
+    }
+  }
+
+  let bigChance = null;
+  if (bigChanceQuality != null) {
+    bigChance = resolveBigChance(player, bigChanceQuality, rng);
+    if (bigChance.scored) {
+      teamGoals += 1;
+      goals += 1;
     }
   }
 
@@ -146,6 +198,7 @@ export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {},
   base += relativeQuality * 1.5;
   if (inZona) base += 1.6;
   if (missedPenalty) base -= 1.8;
+  if (bigChance && !bigChance.scored) base -= 0.5;
   base += rng.gaussian(0, 0.5);
   const matchRating = Math.max(3.2, Math.min(10, Math.round(base * 10) / 10));
 
@@ -173,6 +226,7 @@ export function simulateMatch(player, teamRating, oppRating, rng, matchCtx = {},
     matchRating,
     inZona,
     penalty,
+    bigChance,
     missedPenalty,
     pressurePenaltyMiss,
     injury,

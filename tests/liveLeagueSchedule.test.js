@@ -8,6 +8,7 @@ import {
   playNextMatch,
   rollPenaltyOpportunityForMatch,
   rollBenchChallenge,
+  rollBigChanceOpportunityForMatch,
   hasPendingSubReaction,
   resolveSubReaction,
 } from '../src/engine/season.js';
@@ -61,6 +62,7 @@ test('la tabla se actualiza jornada a jornada, no solo al cierre de temporada', 
 
   rollBenchChallenge(state);
   rollPenaltyOpportunityForMatch(state);
+  rollBigChanceOpportunityForMatch(state);
   playNextMatch(state, basicDecisions);
   assert.ok(
     state.leagueTable.rows.every((r) => r.played === 1),

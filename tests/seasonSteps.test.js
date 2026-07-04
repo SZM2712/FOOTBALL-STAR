@@ -9,6 +9,7 @@ import {
   simulateSeason,
   rollPenaltyOpportunityForMatch,
   rollBenchChallenge,
+  rollBigChanceOpportunityForMatch,
   hasPendingSubReaction,
   resolveSubReaction,
 } from '../src/engine/season.js';
@@ -83,6 +84,7 @@ test('simulateSeason (wrapper de compatibilidad) produce el mismo resultado fina
   while (isMatchdayPending(stateB)) {
     rollBenchChallenge(stateB);
     rollPenaltyOpportunityForMatch(stateB);
+    rollBigChanceOpportunityForMatch(stateB);
     playNextMatch(stateB, basicDecisions);
     if (hasPendingSubReaction(stateB)) {
       resolveSubReaction(stateB, 'calma');

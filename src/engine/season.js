@@ -1,7 +1,7 @@
 import { COUNTRY_BY_CODE } from '../data/countries.js';
 import { CLUB_CONTINENTAL_CUPS, BALLON_NAME, GOLDEN_BOOT_NAME } from '../data/clubs.js';
 import { growAttributes, overallRating, ATTR_KEYS, ATTR_LABELS } from './player.js';
-import { simulateMatch, simulateTeamMatch, rollPenaltyOpportunity, PENALTY_CHOICES } from './match.js';
+import { simulateMatch, simulateTeamMatch, rollPenaltyOpportunity, PENALTY_CHOICES, rollBigChanceOpportunity } from './match.js';
 import { generateSquad, ratePerformance } from './lineup.js';
 import { PRESS_QUESTIONS } from './events.js';
 import { tryAnnualCareerStates, RARE_STATE_DEFS, narrativeFor } from './rareStates.js';
@@ -345,6 +345,22 @@ export function rollPenaltyOpportunityForMatch(state) {
   return has;
 }
 
+/** Se llama ANTES de playNextMatch (mismo patrón que rollPenaltyOpportunityForMatch):
+ * decide si el próximo partido incluye una gran ocasión de gol en juego
+ * (no un penal), para que la UI pueda mostrar el minijuego de tiempo del
+ * remate antes de resolver el partido. Guarda el resultado en
+ * pendingSeason.pendingBigChance. */
+export function rollBigChanceOpportunityForMatch(state) {
+  const ps = state.pendingSeason;
+  if (!ps || ps.matchIndex >= ps.matchesInSeason || ps.weeksOut > 0 || ps.suspendedMatches > 0 || ps.pendingBenchStart) {
+    if (ps) ps.pendingBigChance = false;
+    return false;
+  }
+  const has = rollBigChanceOpportunity(state.player, state.rng);
+  ps.pendingBigChance = has;
+  return has;
+}
+
 /** Opciones de respuesta cuando el entrenador te deja en el banco para un
  * partido: cómo te mentalizás determina tus chances de entrar y de
  * aprovechar bien los minutos si te toca jugar. */
@@ -497,8 +513,21 @@ export function playNextMatch(state, decisions = {}) {
       readinessBonus,
     };
     const penaltyChoice = ps.pendingPenalty ? decisions.penaltyChoice || 'medio' : null;
-    const result = simulateMatch(state.player, state.club.rating, opp.rating, rng, matchCtx, state.rareTracker, penaltyChoice);
+    const penaltyTimingQuality = ps.pendingPenalty ? decisions.penaltyTimingQuality ?? 0.5 : 0.5;
+    const bigChanceQuality = ps.pendingBigChance ? decisions.shotQuality ?? 0.55 : null;
+    const result = simulateMatch(
+      state.player,
+      state.club.rating,
+      opp.rating,
+      rng,
+      matchCtx,
+      state.rareTracker,
+      penaltyChoice,
+      penaltyTimingQuality,
+      bigChanceQuality
+    );
     ps.pendingPenalty = false;
+    ps.pendingBigChance = false;
     updateTableStats(ps.tableStats, state.club.id, opp.id, result.teamGoals, result.oppGoals);
 
     if (comeOnMinute != null) {
@@ -544,6 +573,16 @@ export function playNextMatch(state, decisions = {}) {
         push(`Penal a favor. Elegís "${label}"... el arquero adivina y ataja.`, 'negative');
       } else {
         push(`Penal a favor. Elegís "${label}"... la pelota se va afuera.`, 'negative');
+      }
+    }
+
+    if (result.bigChance) {
+      if (result.bigChance.outcome === 'gol') {
+        push('⚡ ¡Gran ocasión! Rematás con el timing justo... ¡GOL!', 'event');
+      } else if (result.bigChance.outcome === 'atajado') {
+        push('⚡ Gran ocasión, pero el arquero adivina y ataja tu remate.', 'negative');
+      } else {
+        push('⚡ Gran ocasión: el timing no fue el ideal y la pelota se va afuera.', 'negative');
       }
     }
 
@@ -893,6 +932,7 @@ export function simulateSeason(state, decisions = {}) {
   while (isMatchdayPending(state)) {
     rollBenchChallenge(state);
     rollPenaltyOpportunityForMatch(state);
+    rollBigChanceOpportunityForMatch(state);
     feed.push(...playNextMatch(state, decisions));
     if (hasPendingSubReaction(state)) {
       feed.push(...resolveSubReaction(state, decisions.subReactionChoice || 'calma'));

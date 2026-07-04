@@ -8,6 +8,7 @@ import {
   rollManagerTalk,
   MANAGER_TALK_OPTIONS,
   rollPenaltyOpportunityForMatch,
+  rollBigChanceOpportunityForMatch,
   rollBenchChallenge,
   BENCH_CHALLENGE_OPTIONS,
   hasPendingSubReaction,
@@ -33,7 +34,7 @@ import {
   rollUnderperformerTalk,
   PLAYER_TALK_OPTIONS,
 } from './engine/coachCareer.js';
-import { showModal, showInfoModal, showMatchSummary, escapeHtml } from './ui/modal.js';
+import { showModal, showInfoModal, showMatchSummary, showTimingChallenge, showLiveMatch, escapeHtml } from './ui/modal.js';
 import { renderPlayerCard } from './ui/components/playerCard.js';
 import { renderAttributeBars } from './ui/components/attributeBars.js';
 import { renderFeed } from './ui/components/feed.js';
@@ -1038,22 +1039,40 @@ async function handlePlayNextMatch() {
 
   const hasPenalty = rollPenaltyOpportunityForMatch(game);
   let penaltyChoice = null;
+  let penaltyTimingQuality = 0.5;
   if (hasPenalty) {
     penaltyChoice = await showModal({
       title: '¡Penal a tu favor!',
       desc: '¿A dónde tirás?',
       options: Object.entries(PENALTY_CHOICES).map(([id, c]) => ({ label: c.label, value: id })),
     });
+    penaltyTimingQuality = await showTimingChallenge({
+      title: 'Ejecutá el penal',
+      desc: 'Tocá "¡Rematar!" cuando el indicador esté en el centro de la barra.',
+    });
   }
 
-  const feedEntries = playNextMatch(game, { penaltyChoice, benchChallengeChoiceIndex });
+  const hasBigChance = rollBigChanceOpportunityForMatch(game);
+  let shotQuality = null;
+  if (hasBigChance) {
+    shotQuality = await showTimingChallenge({
+      title: '⚡ ¡Gran ocasión!',
+      desc: 'Se abre el arco. Tocá "¡Rematar!" con el mejor timing posible.',
+    });
+  }
+
+  const feedEntries = playNextMatch(game, { penaltyChoice, penaltyTimingQuality, shotQuality, benchChallengeChoiceIndex });
   busy = false;
   render();
+
+  const matchIndex = (game.pendingSeason?.matchIndex ?? 1) - 1;
+  const matchesInSeason = game.pendingSeason?.matchesInSeason;
+  await showLiveMatch({ lines: feedEntries, matchIndex, matchesInSeason });
 
   const reactionOptions = hasPendingSubReaction(game)
     ? Object.entries(SUB_REACTIONS).map(([id, r]) => ({ label: r.label, value: id }))
     : null;
-  const reaction = await showMatchSummary({ lines: feedEntries, reactionOptions, lineups: game.lastMatchLineups });
+  const reaction = await showMatchSummary({ lines: [], reactionOptions, lineups: game.lastMatchLineups });
   if (reaction) {
     resolveSubReaction(game, reaction);
     render();
@@ -1072,7 +1091,10 @@ async function handleSimRestOfSeason() {
   while (isMatchdayPending(game)) {
     rollBenchChallenge(game);
     rollPenaltyOpportunityForMatch(game);
-    allFeed = allFeed.concat(playNextMatch(game, { penaltyChoice: 'medio', benchChallengeChoiceIndex: 1 }));
+    rollBigChanceOpportunityForMatch(game);
+    allFeed = allFeed.concat(
+      playNextMatch(game, { penaltyChoice: 'medio', penaltyTimingQuality: 0.5, shotQuality: 0.55, benchChallengeChoiceIndex: 1 })
+    );
     if (hasPendingSubReaction(game)) {
       allFeed = allFeed.concat(resolveSubReaction(game, 'calma'));
     }
