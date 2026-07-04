@@ -6,7 +6,7 @@ import { createGame, finishChildhood } from '../src/state/gameState.js';
 import { simulateSeason } from '../src/engine/season.js';
 import { acceptOffer, rejectOffer } from '../src/engine/transferMarket.js';
 import { computeLegacy, LEGACY_TITLES } from '../src/engine/legacy.js';
-import { LIFESTYLE_PACKAGES } from '../src/engine/personalLife.js';
+import { LIFESTYLE_PACKAGES, rollPersonalLifeEvent } from '../src/engine/personalLife.js';
 import { ATTR_KEYS } from '../src/engine/player.js';
 import { MAX_RARE_STATES_PER_CAREER } from '../src/engine/rareStates.js';
 import { CHILDHOOD_STAGES, optionsForStage, advanceChildhoodStage } from '../src/engine/childhood.js';
@@ -15,7 +15,7 @@ const N = Number(process.argv[2]) || 1000;
 
 function autoDecide(state) {
   const pkg = state.rng.pick(LIFESTYLE_PACKAGES);
-  return {
+  const decisions = {
     trainingFocus: state.rng.pick([...ATTR_KEYS, 'invisible']),
     hobby: pkg.hobby,
     travel: pkg.travel,
@@ -23,6 +23,12 @@ function autoDecide(state) {
     gambling: pkg.gambling,
     nationalizationChoice: state.rng.chance(0.5) ? 'accept' : 'reject',
   };
+  const personalEvent = rollPersonalLifeEvent(state, state.rng);
+  if (personalEvent) {
+    decisions.personalLifeEvent = personalEvent;
+    decisions.personalLifeChoiceIndex = state.rng.int(0, personalEvent.options.length - 1);
+  }
+  return decisions;
 }
 
 function playChildhood(state) {

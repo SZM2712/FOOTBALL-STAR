@@ -132,6 +132,15 @@ export function simulateSeason(state, decisions = {}) {
     state.retirementReason = 'expulsado';
   }
 
+  // ---- 3.5 Evento interactivo de vida personal (resuelto en la UI antes de llamar) ----
+  if (decisions.personalLifeEvent && decisions.personalLifeChoiceIndex != null) {
+    const opt = decisions.personalLifeEvent.options[decisions.personalLifeChoiceIndex];
+    if (opt) {
+      const text = opt.run(state, rng);
+      if (text) push(text, 'event');
+    }
+  }
+
   // ---- 4. Vida personal: familia y pareja ----
   const fam = familyYearlyEvent(state, rng);
   if (fam) {

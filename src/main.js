@@ -1,7 +1,7 @@
 import { createGame, serializeGame, deserializeGame, finishChildhood, pushFeed } from './state/gameState.js';
 import { simulateSeason, rollPressConferenceQuestion } from './engine/season.js';
 import { rollNationalizationOpportunity } from './engine/nationalTeam.js';
-import { buyLuxury, LIFESTYLE_PACKAGES } from './engine/personalLife.js';
+import { buyLuxury, LIFESTYLE_PACKAGES, rollPersonalLifeEvent } from './engine/personalLife.js';
 import { acceptOffer, rejectOffer, AGENT_TIERS, generateSponsorships } from './engine/transferMarket.js';
 import { collectSponsorships } from './engine/finance.js';
 import { overallRating, POSITION_LABELS, ATTR_KEYS, ATTR_LABELS } from './engine/player.js';
@@ -350,6 +350,12 @@ function renderVidaTab() {
       <p>${pl.children.length ? `Hijos: ${pl.children.map((c) => escapeHtml(c.name)).join(', ')}` : 'Sin hijos por ahora.'}</p>
     </div>
     <div class="card">
+      <h3>Vestuario y entorno</h3>
+      <div class="attr-row"><div class="label">Vestuario</div><div class="attr-bar"><span style="width:${pl.friends.vestuario}%"></span></div><div class="val">${pl.friends.vestuario}</div></div>
+      <div class="attr-row"><div class="label">Barrio</div><div class="attr-bar"><span style="width:${pl.friends.barrio}%"></span></div><div class="val">${pl.friends.barrio}</div></div>
+      <div class="attr-row"><div class="label">Amigos de la fama</div><div class="attr-bar"><span style="width:${pl.friends.fama}%"></span></div><div class="val">${pl.friends.fama}</div></div>
+    </div>
+    <div class="card">
       <h3>Vicios y reputación</h3>
       <div class="attr-row"><div class="label">Alcohol</div><div class="attr-bar"><span style="width:${pl.vices.alcohol}%"></span></div><div class="val">${pl.vices.alcohol}</div></div>
       <div class="attr-row"><div class="label">Apuestas</div><div class="attr-bar"><span style="width:${pl.vices.gambling}%"></span></div><div class="val">${pl.vices.gambling}</div></div>
@@ -613,6 +619,16 @@ async function handleAdvanceYear() {
       title: 'Rueda de prensa',
       desc: pressQ.q,
       options: pressQ.options.map((o, i) => ({ label: o.label, value: i })),
+    });
+  }
+
+  const personalEvent = rollPersonalLifeEvent(game, game.rng);
+  if (personalEvent) {
+    decisions.personalLifeEvent = personalEvent;
+    decisions.personalLifeChoiceIndex = await showModal({
+      title: personalEvent.title,
+      desc: personalEvent.desc,
+      options: personalEvent.options.map((o, i) => ({ label: o.label, value: i })),
     });
   }
 
