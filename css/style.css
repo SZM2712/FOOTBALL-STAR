@@ -332,6 +332,9 @@ p { margin: 0; color: var(--text-dim); line-height: 1.5; }
 .lineup-table th { color: var(--text-dim); font-weight: 600; font-size: 10.5px; text-transform: uppercase; }
 .lineup-table td:first-child, .lineup-table th:first-child { text-align: left; }
 .lineup-table tr.me td { background: rgba(41, 209, 130, 0.12); font-weight: 700; color: var(--text); }
+.sub-badge { font-size: 10px; font-weight: 600; }
+.sub-badge.out { color: var(--danger); }
+.sub-badge.in { color: var(--accent-2); }
 .stat-tile {
   flex: 1;
   min-width: 84px;

@@ -363,7 +363,7 @@ function getClubSquad(state, club) {
  * resumen. Es solo flavor de esa ventana: no se persiste como parte de las
  * estadísticas de carrera, pero la identidad de los planteles sí (ver
  * getClubSquad). */
-function attachMatchLineups(state, opp, result, includeUser) {
+function attachMatchLineups(state, opp, result, includeUser, subOffMinute = null) {
   const homeSquad = getClubSquad(state, state.club);
   const awaySquad = getClubSquad(state, opp);
   const userEntry = includeUser
@@ -373,6 +373,7 @@ function attachMatchLineups(state, opp, result, includeUser) {
         rating: result.matchRating,
         goals: result.goals,
         assists: result.assists,
+        subOffMinute,
       }
     : null;
   const home = ratePerformance({
@@ -436,7 +437,21 @@ export function playNextMatch(state, decisions = {}) {
     const result = simulateMatch(state.player, state.club.rating, opp.rating, rng, matchCtx, state.rareTracker, penaltyChoice);
     ps.pendingPenalty = false;
     updateTableStats(ps.tableStats, state.club.id, opp.id, result.teamGoals, result.oppGoals);
-    attachMatchLineups(state, opp, result, true);
+
+    // ---- Sustitución: si el partido va mal, el DT te puede sacar antes de
+    // tiempo (se decide acá, antes de armar la alineación, para poder
+    // marcar el minuto exacto en la ficha del partido). Cómo reaccionás
+    // (reclamo/calma) se resuelve aparte, con resolveSubReaction. ----
+    let subOffMinute = null;
+    if (!result.red && !result.inZona) {
+      const subProb = result.matchRating <= 5.6 ? 0.32 : result.matchRating <= 6.6 ? 0.1 : 0.02;
+      if (rng.chance(subProb)) {
+        subOffMinute = rng.int(55, 88);
+        ps.pendingSubReaction = { matchIndex: m, minute: subOffMinute };
+      }
+    }
+
+    attachMatchLineups(state, opp, result, true, subOffMinute);
 
     ps.seasonStats.matches++;
     ps.seasonStats.goals += result.goals;
@@ -532,16 +547,8 @@ export function playNextMatch(state, decisions = {}) {
       state.player.monthsSinceInjury = (state.player.monthsSinceInjury || 0) + 1;
     }
 
-    // ---- Sustitución: si el partido va mal, el DT te puede sacar antes de
-    // tiempo. Cómo reaccionás (reclamo/calma) se resuelve aparte, con
-    // resolveSubReaction, para que la UI pueda mostrar la elección. ----
-    const canBeSubbed = !result.red && !result.inZona;
-    if (canBeSubbed) {
-      const subProb = result.matchRating <= 5.6 ? 0.32 : result.matchRating <= 6.6 ? 0.1 : 0.02;
-      if (rng.chance(subProb)) {
-        ps.pendingSubReaction = { matchIndex: m };
-        push(`Te sacan del campo antes de tiempo. ${state.managerName || 'El entrenador'} no está conforme con tu partido.`, 'event');
-      }
+    if (subOffMinute != null) {
+      push(`🔄 Minuto ${subOffMinute}: te sacan del campo. ${state.managerName || 'El entrenador'} no está conforme con tu partido.`, 'event');
     }
   }
 

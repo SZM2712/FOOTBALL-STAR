@@ -15,12 +15,15 @@ function playChildhood(state) {
   }
 }
 
-test('generateSquad arma 11 jugadores con una formación 1-4-4-2 completa', () => {
+test('generateSquad arma 11 titulares (1-4-4-2) más 5 suplentes de banco', () => {
   const rng = new Rng('lineup-1');
   const squad = generateSquad(rng, 'UEFA');
-  assert.equal(squad.length, 11);
+  const starters = squad.filter((p) => p.starter);
+  const bench = squad.filter((p) => !p.starter);
+  assert.equal(starters.length, 11);
+  assert.equal(bench.length, 5);
   const byPos = { POR: 0, DEF: 0, MED: 0, DEL: 0 };
-  for (const p of squad) byPos[p.position]++;
+  for (const p of starters) byPos[p.position]++;
   assert.deepEqual(byPos, { POR: 1, DEF: 4, MED: 4, DEL: 2 });
 });
 
@@ -74,9 +77,52 @@ test('el equipo que gana claramente tiende a calificar mejor que el que pierde',
 test('el mismo plantel conserva los mismos nombres partido a partido (misma referencia de squad)', () => {
   const rng = new Rng('lineup-5');
   const squad = generateSquad(rng, 'UEFA');
-  const namesA = ratePerformance({ squad, rng, teamGoals: 1, oppGoals: 0 }).map((p) => p.name).sort();
-  const namesB = ratePerformance({ squad, rng, teamGoals: 0, oppGoals: 2 }).map((p) => p.name).sort();
-  assert.deepEqual(namesA, namesB, 'los 11 nombres deben ser los mismos en ambos partidos, solo cambia su rendimiento');
+  const squadNames = new Set(squad.map((p) => p.name));
+  const namesA = ratePerformance({ squad, rng, teamGoals: 1, oppGoals: 0 }).map((p) => p.name);
+  const namesB = ratePerformance({ squad, rng, teamGoals: 0, oppGoals: 2 }).map((p) => p.name);
+  for (const n of [...namesA, ...namesB]) {
+    assert.ok(squadNames.has(n), `${n} debería ser parte del plantel fijo del club (titular o suplente)`);
+  }
+});
+
+test('ratePerformance puede simular cambios de banco, con minuto y a quién reemplazan', () => {
+  const rng = new Rng('lineup-subs-1');
+  let sawSub = false;
+  for (let i = 0; i < 40 && !sawSub; i++) {
+    const squad = generateSquad(rng, 'UEFA');
+    const lineup = ratePerformance({ squad, rng, teamGoals: 1, oppGoals: 1 });
+    const subsOn = lineup.filter((p) => p.subOn);
+    const subsOff = lineup.filter((p) => p.subOff);
+    if (subsOn.length && subsOff.length) {
+      sawSub = true;
+      for (const subOn of subsOn) {
+        assert.ok(subOn.subOnMinute >= 46 && subOn.subOnMinute <= 89, 'el cambio debe entrar en la segunda mitad');
+        const pairedOff = subsOff.find((p) => p.name === subOn.replaced);
+        assert.ok(pairedOff, `debe existir el jugador que salió (${subOn.replaced}) reemplazado por ${subOn.name}`);
+        assert.equal(subOn.subOnMinute, pairedOff.subOffMinute, 'el que entra y el que sale comparten el mismo minuto');
+      }
+    }
+  }
+  assert.ok(sawSub, 'en 40 partidos simulados debería haber aparecido al menos un cambio');
+});
+
+test('si el usuario sale sustituido, su entrada queda marcada con el minuto exacto', () => {
+  const rng = new Rng('lineup-subs-2');
+  const squad = generateSquad(rng, 'UEFA');
+  const lineup = ratePerformance({
+    squad,
+    rng,
+    teamGoals: 1,
+    oppGoals: 2,
+    userEntry: { name: 'Pruebita Test', position: 'DEL', rating: 5.2, goals: 0, assists: 0, subOffMinute: 63 },
+  });
+  const mine = lineup.find((p) => p.isUser);
+  assert.ok(mine, 'debe existir la entrada del jugador real');
+  assert.equal(mine.subOff, true);
+  assert.equal(mine.subOffMinute, 63);
+  const replacement = lineup.find((p) => p.subOn && p.replaced === 'Pruebita Test');
+  assert.ok(replacement, 'debe entrar un suplente concreto en el lugar del usuario');
+  assert.equal(replacement.subOnMinute, 63);
 });
 
 const basicDecisions = { trainingFocus: 'pac', hobby: null, travel: null, party: 'ninguna', gambling: 'no' };
@@ -89,8 +135,8 @@ test('tras jugar una temporada, state.lastMatchLineups queda con las alineacione
   simulateSeason(state, basicDecisions);
 
   assert.ok(state.lastMatchLineups, 'debe haberse generado una alineación tras jugar partidos');
-  assert.equal(state.lastMatchLineups.home.players.length, 11);
-  assert.equal(state.lastMatchLineups.away.players.length, 11);
+  assert.ok(state.lastMatchLineups.home.players.length >= 11 && state.lastMatchLineups.home.players.length <= 14);
+  assert.ok(state.lastMatchLineups.away.players.length >= 11 && state.lastMatchLineups.away.players.length <= 14);
 });
 
 test('el plantel de tu propio club es coherente entre jornadas: no cambian los nombres de un partido a otro', () => {

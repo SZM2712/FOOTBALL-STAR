@@ -30,13 +30,19 @@ export function showModal({ title, desc, options }) {
   });
 }
 
+function subBadge(p) {
+  if (p.subOff) return `<br/><span class="sub-badge out">🔄 sale ${p.subOffMinute}'</span>`;
+  if (p.subOn) return `<br/><span class="sub-badge in">🔄 entra ${p.subOnMinute}'${p.replaced ? ` por ${escapeHtml(p.replaced)}` : ''}</span>`;
+  return '';
+}
+
 function renderLineupTable(team) {
   if (!team) return '';
   const rows = team.players
     .map(
       (p) => `
       <tr class="${p.isUser ? 'me' : ''}">
-        <td>${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.name)}${subBadge(p)}</td>
         <td>${p.position}</td>
         <td>${p.rating.toFixed(1)}</td>
         <td>${p.goals || ''}</td>
