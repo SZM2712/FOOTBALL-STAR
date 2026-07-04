@@ -35,6 +35,8 @@ export function createGame(seed) {
     club: null,
     contract: null,
     managerRelationship: 55,
+    managerName: null,
+    pendingRedCardSuspension: 0,
     agent: { tier: 'familiar' },
     money: 0.02,
     peakMoney: 0.02,
@@ -89,6 +91,7 @@ export function finishChildhood(state) {
 
   state.leagueSystems[country.code] = homeLeague;
   state.club = { ...startClub, leagueName: homeLeague.leagueName, division: division.level, countryCode: country.code };
+  state.managerName = randomPersonName(state.rng, country.confed);
   state.contract = {
     salaryM: Math.max(0.01, Math.round((startClub.budgetM / 40) * 100) / 100),
     years: 2,
@@ -96,7 +99,10 @@ export function finishChildhood(state) {
   };
   state.fame = 2;
 
-  const feed = [`Firmas tu primer contrato profesional con ${state.club.name} a los 16 años.`];
+  const feed = [
+    `Firmas tu primer contrato profesional con ${state.club.name} a los 16 años.`,
+    `Tu entrenador será ${state.managerName}.`,
+  ];
   if (player.generational) {
     feed.push('⭐ Los ojeadores ya lo sabían: naciste para ser una Leyenda Generacional. O para nunca estar a la altura de esa etiqueta.');
   }

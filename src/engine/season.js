@@ -8,6 +8,7 @@ import { tryAnnualCareerStates, RARE_STATE_DEFS, narrativeFor } from './rareStat
 import {
   familyYearlyEvent,
   partnerYearlyEvent,
+  checkChildProDebut,
   partyDecision,
   gamblingDecision,
   viceSpiralCheck,
@@ -52,6 +53,33 @@ export function rollPressConferenceQuestion(state) {
   if (!state.rng.chance(0.3)) return null;
   const q = state.rng.pick(PRESS_QUESTIONS);
   return q;
+}
+
+/** Opciones de respuesta cuando el entrenador te llama a charlar por tu
+ * rendimiento. Genéricas: aplican sea cual sea el motivo de la charla. */
+export const MANAGER_TALK_OPTIONS = [
+  { label: 'Reconocerlo y comprometerte a trabajar más', managerD: 8, moraleD: 2, formD: 3 },
+  { label: 'Pedirle paciencia: hay motivos personales', managerD: 3, moraleD: 1, reputationD: 2 },
+  { label: 'Responder a la defensiva', managerD: -9, moraleD: -2 },
+];
+
+/** Se llama antes de startSeason (mismo patrón que rollPressConferenceQuestion):
+ * decide si el entrenador te llama a charlar este año por bajo rendimiento o
+ * mala relación. Devuelve { manager, text } o null. */
+export function rollManagerTalk(state) {
+  if (!state.club || !state.managerName) return null;
+  const recent = state.player.recentRatings || [];
+  const avgRecent = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : 6.5;
+  const poorForm = recent.length >= 3 && avgRecent < 6.0;
+  const badRelationship = state.managerRelationship < 40;
+  if (!poorForm && !badRelationship) return null;
+  if (!state.rng.chance(0.45)) return null;
+  return {
+    manager: state.managerName,
+    text: poorForm
+      ? `${state.managerName} te llama a su oficina: "${state.player.name}, no estás rindiendo a tu nivel. ¿Qué está pasando?"`
+      : `${state.managerName} te busca para hablar: "Últimamente siento que no estamos en la misma sintonía."`,
+  };
 }
 
 /**
@@ -211,6 +239,17 @@ export function startSeason(state, decisions = {}) {
     }
   }
 
+  // ---- Charla con el entrenador (si la UI la resolvió antes de llamar) ----
+  if (decisions.managerTalk && decisions.managerTalkChoiceIndex != null) {
+    const opt = MANAGER_TALK_OPTIONS[decisions.managerTalkChoiceIndex];
+    if (opt) {
+      state.managerRelationship = clamp(state.managerRelationship + (opt.managerD || 0));
+      applyDelta(state, { moraleD: opt.moraleD, formD: opt.formD });
+      if (opt.reputationD) state.personalLife.reputation = clamp(state.personalLife.reputation + opt.reputationD);
+      push(`${decisions.managerTalk.text} → "${opt.label}"`, 'event');
+    }
+  }
+
   // ---- Ocio: hobby y vacaciones ----
   if (decisions.hobby && HOBBIES[decisions.hobby]) {
     HOBBIES[decisions.hobby].apply(state);
@@ -255,6 +294,8 @@ export function startSeason(state, decisions = {}) {
     push(part.text, part.scandal ? 'negative' : 'event');
     applyDelta(state, part);
   }
+  const childDebut = checkChildProDebut(state, rng);
+  if (childDebut) push(childDebut, 'rare');
 
   // ---- Calendario de partidos de club para esta temporada ----
   let hasMatches = false;
@@ -275,8 +316,10 @@ export function startSeason(state, decisions = {}) {
       tableStats: emptyTableStats(division.clubs),
       seasonStats: emptySeasonStats(),
       weeksOut: Math.ceil(state.suspensionWeeks || 0),
+      suspendedMatches: state.pendingRedCardSuspension || 0,
     };
     state.suspensionWeeks = 0;
+    state.pendingRedCardSuspension = 0;
     state.leagueTable = buildLiveLeagueTable(state, state.pendingSeason);
   }
   if (!hasMatches) {
@@ -293,7 +336,7 @@ export function startSeason(state, decisions = {}) {
  * resolver el partido. Guarda el resultado en pendingSeason.pendingPenalty. */
 export function rollPenaltyOpportunityForMatch(state) {
   const ps = state.pendingSeason;
-  if (!ps || ps.matchIndex >= ps.matchesInSeason || ps.weeksOut > 0) {
+  if (!ps || ps.matchIndex >= ps.matchesInSeason || ps.weeksOut > 0 || ps.suspendedMatches > 0) {
     if (ps) ps.pendingPenalty = false;
     return false;
   }
@@ -360,12 +403,15 @@ export function playNextMatch(state, decisions = {}) {
     }
   }
 
-  if (ps.weeksOut > 0) {
-    ps.weeksOut -= 2;
+  if (ps.weeksOut > 0 || ps.suspendedMatches > 0) {
+    const wasSuspended = ps.suspendedMatches > 0;
+    if (ps.weeksOut > 0) ps.weeksOut -= 2;
+    if (wasSuspended) ps.suspendedMatches -= 1;
     const r = simulateTeamMatch(state.club.rating, opp.rating, rng);
     updateTableStats(ps.tableStats, state.club.id, opp.id, r.teamGoals, r.oppGoals);
     attachMatchLineups(state, opp, r, false);
-    push(`J${m + 1}: sigues de baja, no viajas con el plantel (${state.club.name} ${r.teamGoals}-${r.oppGoals} ${opp.name}).`, 'negative');
+    const reason = wasSuspended ? 'cumples sanción por la expulsión, no puedes jugar' : 'sigues de baja, no viajas con el plantel';
+    push(`J${m + 1}: ${reason} (${state.club.name} ${r.teamGoals}-${r.oppGoals} ${opp.name}).`, 'negative');
   } else {
     const isLateSeason = m >= ps.matchesInSeason - 3;
     const matchCtx = {
@@ -425,14 +471,21 @@ export function playNextMatch(state, decisions = {}) {
     }
 
     if (result.red) {
+      // La sanción se aplica al próximo partido de la temporada; si la roja
+      // llega en el último partido, se carga a la temporada siguiente (ver
+      // pendingRedCardSuspension en startSeason).
+      const banMatches = result.redCardType === 'merecida' ? 2 : 1;
+      if (m + 1 < ps.matchesInSeason) ps.suspendedMatches = (ps.suspendedMatches || 0) + banMatches;
+      else state.pendingRedCardSuspension = (state.pendingRedCardSuspension || 0) + banMatches;
+
       if (result.redCardType === 'merecida') {
         state.player.morale = clamp(state.player.morale - 6);
         state.personalLife.reputation = clamp(state.personalLife.reputation - 4);
-        push('Expulsión merecida: una entrada imprudente que el árbitro no puede dejar pasar.', 'negative');
+        push(`Expulsión merecida: una entrada imprudente que el árbitro no puede dejar pasar. Te perderás los próximos ${banMatches} partidos.`, 'negative');
       } else {
         state.player.morale = clamp(state.player.morale - 2);
         state.personalLife.reputation = clamp(state.personalLife.reputation + 2);
-        push('Expulsión injusta: el árbitro se equivoca y la prensa te respalda.', 'negative');
+        push(`Expulsión injusta: el árbitro se equivoca y la prensa te respalda. Aun así, te perderás el próximo partido.`, 'negative');
       }
     }
 
@@ -474,7 +527,7 @@ export function playNextMatch(state, decisions = {}) {
       const subProb = result.matchRating <= 5.6 ? 0.32 : result.matchRating <= 6.6 ? 0.1 : 0.02;
       if (rng.chance(subProb)) {
         ps.pendingSubReaction = { matchIndex: m };
-        push('Te sacan del campo antes de tiempo. El entrenador no está conforme con tu partido.', 'event');
+        push(`Te sacan del campo antes de tiempo. ${state.managerName || 'El entrenador'} no está conforme con tu partido.`, 'event');
       }
     }
   }
@@ -507,12 +560,13 @@ export function resolveSubReaction(state, choiceId) {
   state.managerRelationship = clamp(state.managerRelationship + choice.managerD);
   state.player.morale = clamp(state.player.morale + choice.moraleD);
   ps.pendingSubReaction = null;
+  const managerLabel = state.managerName || 'el entrenador';
   const feed = [
     {
       text:
         choiceId === 'reclamar'
-          ? 'Le reclamás al entrenador en pleno vestuario. Te desahogás, pero la relación se resiente.'
-          : 'Te lo tomás con calma y profesionalismo. El cuerpo técnico lo valora.',
+          ? `Le reclamás a ${managerLabel} en pleno vestuario. Te desahogás, pero la relación se resiente.`
+          : `Te lo tomás con calma y profesionalismo. ${managerLabel} lo valora.`,
       type: choiceId === 'reclamar' ? 'negative' : 'event',
     },
   ];
@@ -727,6 +781,12 @@ export function finishSeason(state, decisions = {}) {
 
   // ---- Nuevas ofertas de mercado para el próximo año ----
   state.currentOffers = state.retired ? [] : generateOffers(state);
+
+  // Si quedó sanción sin cumplir (roja en los últimos partidos de la
+  // temporada), se arrastra a la temporada siguiente.
+  if (ps.suspendedMatches > 0) {
+    state.pendingRedCardSuspension = (state.pendingRedCardSuspension || 0) + ps.suspendedMatches;
+  }
 
   state.pendingSeason = null;
   flushFeed(state, feed);

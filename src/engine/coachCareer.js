@@ -12,11 +12,34 @@ import { simulateTeamMatch } from './match.js';
 import { getLeagueSystem } from './transferMarket.js';
 import { computeLegacy } from './legacy.js';
 import { isWorldCupYear, isContinentalYear, CONTINENTAL_CUP_NAME } from './nationalTeam.js';
+import { randomPersonName } from '../data/names.js';
 
 export const COACH_RETIREMENT_AGE_HARD = 75;
 
 function clamp(v, min = 0, max = 100) {
   return Math.max(min, Math.min(max, v));
+}
+
+/** Lo mismo que rollManagerTalk pero al revés: ahora sos vos el que dirige,
+ * y un jugador clave viene de una temporada floja. Se llama antes de
+ * simulateCoachSeason (mismo patrón peek-antes-de-resolver). */
+export const PLAYER_TALK_OPTIONS = [
+  { label: 'Hablarle firme, exigirle más', ratingD: 1.4, reputationD: -2 },
+  { label: 'Apoyarlo y darle confianza', ratingD: 0.7, reputationD: 3 },
+  { label: 'Dejarlo en el banco un partido de advertencia', ratingD: 2.0, reputationD: -4 },
+];
+
+export function rollUnderperformerTalk(state) {
+  const coach = state.coach;
+  if (!coach || !coach.club || coach.nationalTeamJob) return null;
+  const lastSeason = coach.seasons[coach.seasons.length - 1];
+  if (!lastSeason) return null;
+  const ppg = lastSeason.points / Math.max(1, lastSeason.matches);
+  if (ppg >= 1.3) return null;
+  if (!state.rng.chance(0.4)) return null;
+  const confed = COUNTRY_BY_CODE[coach.club.countryCode]?.confed || 'UEFA';
+  const name = randomPersonName(state.rng, confed);
+  return { player: name, text: `${name}, una de tus piezas clave, viene de una temporada floja. El vestuario espera que hables.` };
 }
 
 function pickStartingClub(state, rng) {
@@ -62,6 +85,16 @@ function simulateClubSeason(state, decisions) {
   const coach = state.coach;
   const club = coach.club;
   const feed = [];
+
+  // ---- Charla con un jugador que rinde mal (si la UI la resolvió antes) ----
+  if (decisions.playerTalk && decisions.playerTalkChoiceIndex != null) {
+    const opt = PLAYER_TALK_OPTIONS[decisions.playerTalkChoiceIndex];
+    if (opt) {
+      club.rating = Math.min(97, club.rating + opt.ratingD);
+      coach.reputation = clamp(coach.reputation + opt.reputationD, 5, 99);
+      feed.push(`${decisions.playerTalk.text} → "${opt.label}"`);
+    }
+  }
 
   const tacticMod = { ofensivo: 4, defensivo: -1, equilibrado: 1 }[decisions.tactic] || 0;
   const leagueSystem = getLeagueSystem(state, club.countryCode);

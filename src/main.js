@@ -5,6 +5,8 @@ import {
   finishSeason,
   isMatchdayPending,
   rollPressConferenceQuestion,
+  rollManagerTalk,
+  MANAGER_TALK_OPTIONS,
   rollPenaltyOpportunityForMatch,
   hasPendingSubReaction,
   resolveSubReaction,
@@ -26,6 +28,8 @@ import {
   acceptCoachOffer,
   rejectCoachOffer,
   computeCoachLegacy,
+  rollUnderperformerTalk,
+  PLAYER_TALK_OPTIONS,
 } from './engine/coachCareer.js';
 import { showModal, showInfoModal, showMatchSummary, escapeHtml } from './ui/modal.js';
 import { renderPlayerCard } from './ui/components/playerCard.js';
@@ -46,9 +50,9 @@ function fmtMoney(m) {
 }
 
 function relationshipLabel(v) {
-  if (v >= 80) return 'Excelente';
-  if (v >= 60) return 'Buena';
-  if (v >= 40) return 'Tensa';
+  if (v >= 75) return 'Excelente';
+  if (v >= 50) return 'Buena';
+  if (v >= 35) return 'Tensa';
   if (v >= 20) return 'Mala';
   return 'Rota';
 }
@@ -335,7 +339,7 @@ function renderMercadoTab() {
         <div class="pill accent">${fmtMoney(game.contract.salaryM)}/año</div>
       </div>
       <p class="muted" style="margin-top:6px">Contrato: ${game.contract.years} año${game.contract.years === 1 ? '' : 's'} restante${game.contract.years === 1 ? '' : 's'} · Cláusula ${fmtMoney(game.contract.clauseM)}</p>
-      <p class="muted" style="margin-top:6px">Relación con el entrenador: ${relationshipLabel(game.managerRelationship)} (${Math.round(game.managerRelationship)}/100)</p>`
+      <p class="muted" style="margin-top:6px">Relación con ${escapeHtml(game.managerName || 'el entrenador')}: ${relationshipLabel(game.managerRelationship)} (${Math.round(game.managerRelationship)}/100)</p>`
           : `<p class="muted">Eres agente libre. No tienes club ni contrato: elige una de las ofertas de abajo para volver a competir.</p>`
       }
     </div>
@@ -442,7 +446,21 @@ function renderVidaTab() {
     <div class="card">
       <h3>Pareja e hijos</h3>
       <p>${pl.partner ? `En pareja con ${escapeHtml(pl.partner.name)}${pl.married ? ' (casados)' : ''}.` : 'Actualmente soltero/a.'}</p>
-      <p>${pl.children.length ? `Hijos: ${pl.children.map((c) => escapeHtml(c.name)).join(', ')}` : 'Sin hijos por ahora.'}</p>
+      ${
+        pl.children.length
+          ? pl.children
+              .map((c) => {
+                const age = game.year - c.bornYear;
+                const status = c.proDebut
+                  ? ' — ¡debutó como profesional! 🎉'
+                  : c.pursuingFootball === true
+                  ? ' (sigue tus pasos en el fútbol)'
+                  : '';
+                return `<p>${escapeHtml(c.name)} (${age} años) · vínculo: ${relationshipLabel(c.bond)}${status}</p>`;
+              })
+              .join('')
+          : '<p>Sin hijos por ahora.</p>'
+      }
     </div>
     <div class="card">
       <h3>Vestuario y entorno</h3>
@@ -823,6 +841,15 @@ async function handleAdvanceCoachYear() {
   render();
 
   const decisions = {};
+  const playerTalk = rollUnderperformerTalk(game);
+  if (playerTalk) {
+    decisions.playerTalk = playerTalk;
+    decisions.playerTalkChoiceIndex = await showModal({
+      title: `Charla con ${playerTalk.player}`,
+      desc: playerTalk.text,
+      options: PLAYER_TALK_OPTIONS.map((o, i) => ({ label: o.label, value: i })),
+    });
+  }
   if (game.coach.club && !game.coach.nationalTeamJob) {
     decisions.tactic = await showModal({
       title: 'Táctica de la temporada',
@@ -946,6 +973,16 @@ async function handleAdvanceYear() {
       title: 'Rueda de prensa',
       desc: pressQ.q,
       options: pressQ.options.map((o, i) => ({ label: o.label, value: i })),
+    });
+  }
+
+  const managerTalk = rollManagerTalk(game);
+  if (managerTalk) {
+    decisions.managerTalk = managerTalk;
+    decisions.managerTalkChoiceIndex = await showModal({
+      title: `Charla con ${managerTalk.manager}`,
+      desc: managerTalk.text,
+      options: MANAGER_TALK_OPTIONS.map((o, i) => ({ label: o.label, value: i })),
     });
   }
 

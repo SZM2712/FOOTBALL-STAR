@@ -1,6 +1,7 @@
 import { COUNTRY_BY_CODE } from '../data/countries.js';
 import { generateLeagueSystem } from '../data/clubs.js';
 import { overallRating } from './player.js';
+import { randomPersonName } from '../data/names.js';
 
 export const AGENT_TIERS = {
   familiar: { label: 'Agente familiar', commission: 0.05, offerQuality: 0.75, offerCount: [1, 2] },
@@ -84,6 +85,7 @@ export function attemptContractRenewal(state, rng) {
   state.club = null;
   state.contract = null;
   state.managerRelationship = 55;
+  state.managerName = null;
   return {
     renewed: false,
     text: `Tu contrato con ${clubName} llega a su fin y el club decide no renovarte. Eres agente libre: tendrás que buscar equipo en el mercado.`,
@@ -101,6 +103,7 @@ export function checkForcedTransferListing(state, rng) {
   state.club = null;
   state.contract = null;
   state.managerRelationship = 55;
+  state.managerName = null;
   return `Tu relación con el cuerpo técnico de ${clubName} se rompió: el club decide prescindir de vos antes de que termine tu contrato.`;
 }
 
@@ -172,8 +175,12 @@ export function acceptOffer(state, offer) {
   state.rareTracker.profile.seasonsAtCurrentClub = 0;
   state.transferredThisYear = true;
   state.managerRelationship = 55;
+  state.managerName = randomPersonName(state.rng, offer.country.confed);
 
-  const feed = [`Fichaje: ${state.player.name} firma por ${offer.club.name} (${offer.league}).`];
+  const feed = [
+    `Fichaje: ${state.player.name} firma por ${offer.club.name} (${offer.league}).`,
+    `Tu nuevo entrenador es ${state.managerName}.`,
+  ];
 
   if (offer.isExotic && state.rareTracker.canStartNew() && offer.wageM > prevSalaryM * 1.5) {
     if (state.rng.chance(0.3)) {

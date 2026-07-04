@@ -66,6 +66,26 @@ export function familyYearlyEvent(state, rng) {
   return null;
 }
 
+/** Payoff de haber apoyado a un hijo con talento: si sigue el fútbol y
+ * llega a edad de firmar, hay una chance real de debutar como profesional.
+ * Se llama una vez por año (mismo momento que familyYearlyEvent). */
+export function checkChildProDebut(state, rng) {
+  const pl = state.personalLife;
+  for (const kid of pl.children) {
+    if (kid.proDebut || !kid.talent || kid.pursuingFootball !== true) continue;
+    const age = state.year - kid.bornYear;
+    if (age < 16 || age > 20) continue;
+    const chance = 0.3 + (kid.bond - 65) / 250;
+    if (rng.chance(Math.max(0.1, Math.min(0.7, chance)))) {
+      kid.proDebut = true;
+      state.fame = clamp(state.fame + 3);
+      pl.reputation = clamp(pl.reputation + 4);
+      return `Tu hijo/a ${kid.name} firma su primer contrato profesional. Lo ves debutar desde la tribuna, con el pecho hinchado: el apellido sigue en las canchas.`;
+    }
+  }
+  return null;
+}
+
 /** Eventos pasivos de pareja: solo lo que realmente no se puede "elegir"
  * (que te descubran, o una ruptura repentina). Conocer a alguien, casarte,
  * tener hijos, etc. ahora son decisiones interactivas: ver
@@ -189,7 +209,7 @@ const PERSONAL_EVENTS = {
             label: 'Pedir tiempo al club para estar presente',
             run: (state, rng) => {
               const childName = randomPersonName(rng, state.country.confed).split(' ')[0];
-              state.personalLife.children.push({ name: childName, bornYear: state.year, talent: rng.chance(0.15) });
+              state.personalLife.children.push({ name: childName, bornYear: state.year, talent: rng.chance(0.15), bond: 70, pursuingFootball: null, proDebut: false });
               state.player.morale = clamp(state.player.morale + 10);
               state.player.form = clamp(state.player.form - 3);
               return `¡Nace tu hijo/a ${childName}! Eliges estar presente, aunque el ritmo de entrenamiento resiente un poco.`;
@@ -199,10 +219,80 @@ const PERSONAL_EVENTS = {
             label: 'Mantener el ritmo profesional al máximo',
             run: (state, rng) => {
               const childName = randomPersonName(rng, state.country.confed).split(' ')[0];
-              state.personalLife.children.push({ name: childName, bornYear: state.year, talent: rng.chance(0.15) });
+              state.personalLife.children.push({ name: childName, bornYear: state.year, talent: rng.chance(0.15), bond: 55, pursuingFootball: null, proDebut: false });
               state.player.morale = clamp(state.player.morale + 4);
               state.fame = clamp(state.fame + 1);
               return `¡Nace tu hijo/a ${childName}! Sigues entrenando al máximo nivel; tu familia lo entiende, aunque cuesta.`;
+            },
+          },
+        ],
+      };
+    },
+  },
+
+  hijoNecesitaAtencion: {
+    eligible: (state) => state.personalLife.children.some((c) => state.year - c.bornYear >= 2 && state.year - c.bornYear <= 13),
+    chance: () => 0.16,
+    build: (state, rng) => {
+      const kid = rng.pick(state.personalLife.children.filter((c) => state.year - c.bornYear >= 2 && state.year - c.bornYear <= 13));
+      return {
+        id: 'hijoNecesitaAtencion',
+        title: `${kid.name} te necesita`,
+        desc: `${kid.name} tiene un acto escolar importante justo en medio de la pretemporada. ¿Qué haces?`,
+        options: [
+          {
+            label: 'Estar presente, cueste lo que cueste',
+            run: (state) => {
+              kid.bond = clamp(kid.bond + 10);
+              state.player.morale = clamp(state.player.morale + 5);
+              state.player.form = clamp(state.player.form - 3);
+              return `Vas al acto de ${kid.name}. La cara que pone al verte ahí no tiene precio, aunque el cuerpo técnico nota tu ausencia en la pretemporada.`;
+            },
+          },
+          {
+            label: 'Priorizar el trabajo con el equipo',
+            run: (state) => {
+              kid.bond = clamp(kid.bond - 8);
+              state.player.form = clamp(state.player.form + 2);
+              state.managerRelationship = clamp(state.managerRelationship + 3);
+              return `Te quedás entrenando. ${kid.name} lo entiende, pero se nota que le hubiese gustado verte ahí.`;
+            },
+          },
+        ],
+      };
+    },
+  },
+
+  hijoSigueTusPasos: {
+    eligible: (state) =>
+      state.personalLife.children.some((c) => c.talent && c.pursuingFootball == null && state.year - c.bornYear >= 13 && state.year - c.bornYear <= 16),
+    chance: () => 0.2,
+    build: (state, rng) => {
+      const candidates = state.personalLife.children.filter(
+        (c) => c.talent && c.pursuingFootball == null && state.year - c.bornYear >= 13 && state.year - c.bornYear <= 16
+      );
+      const kid = rng.pick(candidates);
+      return {
+        id: 'hijoSigueTusPasos',
+        title: `${kid.name} quiere seguir tus pasos`,
+        desc: `${kid.name} te pide que lo lleves a probarse en las inferiores de tu club. Se nota que tiene algo especial con la pelota.`,
+        options: [
+          {
+            label: 'Apoyarlo de lleno en el fútbol',
+            run: (state) => {
+              kid.pursuingFootball = true;
+              kid.bond = clamp(kid.bond + 8);
+              state.player.morale = clamp(state.player.morale + 4);
+              return `Llevás a ${kid.name} a probarse. Los ojeadores del club se van impresionados.`;
+            },
+          },
+          {
+            label: 'Dejar que elija su propio camino',
+            run: (state) => {
+              kid.pursuingFootball = false;
+              kid.bond = clamp(kid.bond + 4);
+              state.personalLife.reputation = clamp(state.personalLife.reputation + 2);
+              return `Le decís que el camino lo elige él. Se lo agradece, aunque en el fondo esperabas otra respuesta.`;
             },
           },
         ],
