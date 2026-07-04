@@ -2,7 +2,7 @@ import { COUNTRY_BY_CODE } from '../data/countries.js';
 import { CLUB_CONTINENTAL_CUPS, BALLON_NAME, GOLDEN_BOOT_NAME } from '../data/clubs.js';
 import { growAttributes, overallRating, ATTR_KEYS, ATTR_LABELS } from './player.js';
 import { simulateMatch, simulateTeamMatch, rollPenaltyOpportunity, PENALTY_CHOICES } from './match.js';
-import { generateMatchLineup } from './lineup.js';
+import { generateSquad, ratePerformance } from './lineup.js';
 import { PRESS_QUESTIONS } from './events.js';
 import { tryAnnualCareerStates, RARE_STATE_DEFS, narrativeFor } from './rareStates.js';
 import {
@@ -345,14 +345,27 @@ export function rollPenaltyOpportunityForMatch(state) {
   return has;
 }
 
-/** Inventa las alineaciones de 11 jugadores de ambos clubes para el partido
- * recién jugado (goles/asistencias/calificación coherentes con el
- * marcador), y las deja en state.lastMatchLineups para que la UI las
- * muestre en la pantalla de resumen. Es solo flavor de esa ventana: no se
- * persiste como parte de las estadísticas de carrera. */
+/** Devuelve el plantel fijo (11 nombres + posición) de un club, generándolo
+ * y cacheándolo en state.clubSquads la primera vez que aparece. Así el
+ * mismo club siempre tiene a los mismos jugadores, partido a partido y
+ * temporada a temporada, en vez de inventar 11 nombres nuevos cada vez. */
+function getClubSquad(state, club) {
+  if (!state.clubSquads[club.id]) {
+    const confed = COUNTRY_BY_CODE[club.countryCode]?.confed || 'UEFA';
+    state.clubSquads[club.id] = generateSquad(state.rng, confed);
+  }
+  return state.clubSquads[club.id];
+}
+
+/** Calcula la calificación/goles/asistencias de ambos planteles para el
+ * partido recién jugado (coherentes con el marcador), y las deja en
+ * state.lastMatchLineups para que la UI las muestre en la pantalla de
+ * resumen. Es solo flavor de esa ventana: no se persiste como parte de las
+ * estadísticas de carrera, pero la identidad de los planteles sí (ver
+ * getClubSquad). */
 function attachMatchLineups(state, opp, result, includeUser) {
-  const confed = COUNTRY_BY_CODE[state.club.countryCode]?.confed || 'UEFA';
-  const oppConfed = COUNTRY_BY_CODE[opp.countryCode]?.confed || confed;
+  const homeSquad = getClubSquad(state, state.club);
+  const awaySquad = getClubSquad(state, opp);
   const userEntry = includeUser
     ? {
         name: state.player.name,
@@ -362,16 +375,16 @@ function attachMatchLineups(state, opp, result, includeUser) {
         assists: result.assists,
       }
     : null;
-  const home = generateMatchLineup({
+  const home = ratePerformance({
+    squad: homeSquad,
     rng: state.rng,
-    confed,
     teamGoals: result.teamGoals,
     oppGoals: result.oppGoals,
     ownGoals: includeUser ? result.goals : 0,
     ownAssists: includeUser ? result.assists : 0,
     userEntry,
   });
-  const away = generateMatchLineup({ rng: state.rng, confed: oppConfed, teamGoals: result.oppGoals, oppGoals: result.teamGoals });
+  const away = ratePerformance({ squad: awaySquad, rng: state.rng, teamGoals: result.oppGoals, oppGoals: result.teamGoals });
   state.lastMatchLineups = {
     home: { clubName: state.club.name, players: home },
     away: { clubName: opp.name, players: away },

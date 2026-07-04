@@ -10,6 +10,20 @@ const FORMATION = [
   ['DEL', 2],
 ];
 
+/**
+ * Inventa la identidad fija (nombre + posición) del plantel de un club: se
+ * genera UNA sola vez por club (ver getClubSquad en season.js, que la
+ * cachea) y no vuelve a cambiar, para que el mismo club siempre tenga a los
+ * mismos 11 jugadores partido a partido, temporada a temporada.
+ */
+export function generateSquad(rng, confed) {
+  const slots = [];
+  for (const [position, count] of FORMATION) {
+    for (let i = 0; i < count; i++) slots.push(position);
+  }
+  return slots.map((position) => ({ name: randomPersonName(rng, confed), position }));
+}
+
 function baseRatingFor(position, teamGoals, oppGoals, rng) {
   const gd = teamGoals - oppGoals;
   let base = 6.0 + gd * 0.15;
@@ -20,23 +34,19 @@ function baseRatingFor(position, teamGoals, oppGoals, rng) {
 }
 
 /**
- * Inventa una alineación de 11 jugadores para un club en un partido puntual,
- * con calificación, goles y asistencias coherentes con el marcador real
- * (el equipo que gana tiende a calificar mejor, y los goles/asistencias del
- * equipo se reparten entre mediocampistas/delanteros). Si se pasa
- * `userEntry`, reemplaza a un jugador de su misma posición por sus stats
- * reales (el jugador que controla el usuario no se duplica).
+ * A partir del plantel fijo de un club (su identidad no cambia), calcula la
+ * calificación/goles/asistencias de ESTE partido puntual, coherentes con el
+ * marcador real (el equipo que gana tiende a calificar mejor, y los goles/
+ * asistencias del equipo se reparten entre mediocampistas/delanteros). Si se
+ * pasa `userEntry`, reemplaza al jugador de esa posición por sus stats
+ * reales (el jugador que controla el usuario no se duplica, y siempre es el
+ * mismo puesto del plantel el que se superpone con él).
  */
-export function generateMatchLineup({ rng, confed, teamGoals, oppGoals, ownGoals = 0, ownAssists = 0, userEntry = null }) {
-  const slots = [];
-  for (const [position, count] of FORMATION) {
-    for (let i = 0; i < count; i++) slots.push(position);
-  }
-
-  const lineup = slots.map((position) => ({
-    name: randomPersonName(rng, confed),
-    position,
-    rating: baseRatingFor(position, teamGoals, oppGoals, rng),
+export function ratePerformance({ squad, rng, teamGoals, oppGoals, ownGoals = 0, ownAssists = 0, userEntry = null }) {
+  const lineup = squad.map((p) => ({
+    name: p.name,
+    position: p.position,
+    rating: baseRatingFor(p.position, teamGoals, oppGoals, rng),
     goals: 0,
     assists: 0,
   }));

@@ -42,6 +42,7 @@ export function createGame(seed) {
     peakMoney: 0.02,
     fame: 0,
     leagueSystems: {},
+    clubSquads: {},
     rareTracker: new RareStateTracker(),
     personalLife,
     nationalTeam: {
