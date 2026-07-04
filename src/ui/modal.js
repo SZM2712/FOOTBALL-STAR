@@ -30,21 +30,50 @@ export function showModal({ title, desc, options }) {
   });
 }
 
+function renderLineupTable(team) {
+  if (!team) return '';
+  const rows = team.players
+    .map(
+      (p) => `
+      <tr class="${p.isUser ? 'me' : ''}">
+        <td>${escapeHtml(p.name)}</td>
+        <td>${p.position}</td>
+        <td>${p.rating.toFixed(1)}</td>
+        <td>${p.goals || ''}</td>
+        <td>${p.assists || ''}</td>
+      </tr>`
+    )
+    .join('');
+  return `
+    <div class="lineup-block">
+      <div class="lineup-title">${escapeHtml(team.clubName)}</div>
+      <div class="table-scroll">
+        <table class="lineup-table">
+          <thead><tr><th>Jugador</th><th>Pos</th><th>Calif</th><th>G</th><th>A</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 /** Muestra la pantalla de resumen de un partido: todas sus líneas de feed
- * (marcador, goles/asistencias, eventos) y, si corresponde, la elección de
- * cómo reaccionar a haber sido sustituido. Resuelve con el value de la
- * reacción elegida, o null si no había ninguna reacción pendiente. */
-export function showMatchSummary({ lines, reactionOptions }) {
+ * (marcador, goles/asistencias, eventos), las alineaciones inventadas de
+ * ambos equipos con su calificación del partido y, si corresponde, la
+ * elección de cómo reaccionar a haber sido sustituido. Resuelve con el
+ * value de la reacción elegida, o null si no había ninguna pendiente. */
+export function showMatchSummary({ lines, reactionOptions, lineups }) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     const linesHtml = lines
       .map((l) => `<div class="feed-entry ${l.type || 'normal'}"><div class="text">${escapeHtml(l.text)}</div></div>`)
       .join('');
+    const lineupsHtml = lineups ? `${renderLineupTable(lineups.home)}${renderLineupTable(lineups.away)}` : '';
     overlay.innerHTML = `
       <div class="modal">
         <h2>Resumen del partido</h2>
         <div class="feed match-summary-feed">${linesHtml}</div>
+        ${lineupsHtml}
         <div class="btn-list" data-options></div>
       </div>
     `;

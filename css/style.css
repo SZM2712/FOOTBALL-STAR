@@ -325,6 +325,13 @@ p { margin: 0; color: var(--text-dim); line-height: 1.5; }
 .league-table th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; }
 .league-table td:nth-child(2), .league-table th:nth-child(2) { text-align: left; }
 .league-table tr.me td { background: rgba(41, 209, 130, 0.12); font-weight: 700; color: var(--text); }
+.lineup-block { margin-top: 10px; }
+.lineup-title { font-size: 12.5px; font-weight: 700; color: var(--text-dim); margin-bottom: 4px; text-transform: uppercase; }
+.lineup-table { border-collapse: collapse; width: 100%; font-size: 11.5px; white-space: nowrap; }
+.lineup-table th, .lineup-table td { padding: 4px 6px; text-align: center; border-bottom: 1px solid var(--border); }
+.lineup-table th { color: var(--text-dim); font-weight: 600; font-size: 10.5px; text-transform: uppercase; }
+.lineup-table td:first-child, .lineup-table th:first-child { text-align: left; }
+.lineup-table tr.me td { background: rgba(41, 209, 130, 0.12); font-weight: 700; color: var(--text); }
 .stat-tile {
   flex: 1;
   min-width: 84px;

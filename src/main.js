@@ -1004,7 +1004,7 @@ async function handlePlayNextMatch() {
   const reactionOptions = hasPendingSubReaction(game)
     ? Object.entries(SUB_REACTIONS).map(([id, r]) => ({ label: r.label, value: id }))
     : null;
-  const reaction = await showMatchSummary({ lines: feedEntries, reactionOptions });
+  const reaction = await showMatchSummary({ lines: feedEntries, reactionOptions, lineups: game.lastMatchLineups });
   if (reaction) {
     resolveSubReaction(game, reaction);
     render();

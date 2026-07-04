@@ -16,12 +16,12 @@ function basePlayer(overrides = {}) {
   };
 }
 
-test('La Zona: probabilidad base baja (~0.5%) sin condiciones especiales', () => {
+test('La Zona: probabilidad base baja (~0.8%) sin condiciones especiales', () => {
   const p = laZonaProbability(basePlayer(), { highPressure: false });
-  assert.ok(p >= 0.004 && p <= 0.01, `esperaba ~0.5%, obtuvo ${p}`);
+  assert.ok(p >= 0.006 && p <= 0.013, `esperaba ~0.8%, obtuvo ${p}`);
 });
 
-test('La Zona: hasta 8% cuando se cumplen TODAS las condiciones', () => {
+test('La Zona: hasta 12% cuando se cumplen TODAS las condiciones', () => {
   const perfectPlayer = basePlayer({
     form: 96,
     monthsSinceInjury: 12,
@@ -31,7 +31,7 @@ test('La Zona: hasta 8% cuando se cumplen TODAS las condiciones', () => {
     recentRatings: [8.2, 8.5, 9.0, 8.1, 8.8],
   });
   const p = laZonaProbability(perfectPlayer, { highPressure: true });
-  assert.ok(p >= 0.075 && p <= 0.08, `esperaba ~8%, obtuvo ${p}`);
+  assert.ok(p >= 0.11 && p <= 0.12, `esperaba ~12%, obtuvo ${p}`);
 });
 
 test('La Zona: jugador Generacional multiplica la probabilidad por 5', () => {

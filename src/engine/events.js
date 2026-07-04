@@ -2,12 +2,12 @@
 
 export const MATCH_EVENTS = {
   hatTrickClasico: {
-    p: 0.12,
+    p: 0.17,
     when: (ctx) => ctx.goals >= 3,
     text: (p) => `¡Hat-trick de ${p.name}! El estadio entero canta su nombre.`,
   },
   golazoChilena: {
-    p: 0.05,
+    p: 0.08,
     when: (ctx) => ctx.goals >= 1,
     text: (p) => `${p.name} conecta una chilena imposible. Hasta el rival aplaude de pie.`,
   },
@@ -18,22 +18,22 @@ export const MATCH_EVENTS = {
     tag: 'penalFallado',
   },
   expulsionPolemica: {
-    p: 0.02,
+    p: 0.03,
     when: () => true,
     text: (p) => `Expulsión muy discutida para ${p.name}. El árbitro no quiere ni mirar la repetición.`,
   },
   asistenciaOlimpica: {
-    p: 0.08,
+    p: 0.12,
     when: (ctx) => ctx.assists >= 1,
     text: (p) => `${p.name} reparte una asistencia de otro planeta para el gol del triunfo.`,
   },
   atajadaMilagro: {
-    p: 0.1,
+    p: 0.15,
     when: (ctx) => ctx.position === 'POR' && ctx.goodMatch,
     text: (p) => `${p.name} saca una mano milagrosa bajo el travesaño en el último minuto.`,
   },
   golDeUltimoMinuto: {
-    p: 0.09,
+    p: 0.14,
     when: (ctx) => ctx.goals >= 1 && ctx.highPressure,
     text: (p) => `¡Gol de ${p.name} en el descuento! La grada se vuelve loca.`,
   },

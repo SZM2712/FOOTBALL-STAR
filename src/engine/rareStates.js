@@ -79,7 +79,7 @@ export function rollGenerational(rng) {
 
 /**
  * Probabilidad de "La Zona" en un partido concreto.
- * Base 0.5%, hasta 8% si se cumplen TODAS las condiciones (x5 si es Generacional).
+ * Base 0.8%, hasta 12% si se cumplen TODAS las condiciones (x5 si es Generacional).
  */
 export function laZonaProbability(player, matchCtx, tracker) {
   if (tracker?.guaranteedZona && matchCtx.highPressure) return 1;
@@ -96,9 +96,9 @@ export function laZonaProbability(player, matchCtx, tracker) {
   ];
   const met = conditions.filter(Boolean).length;
   const frac = met / conditions.length;
-  let p = 0.005 + (0.08 - 0.005) * Math.pow(frac, 3);
+  let p = 0.008 + (0.12 - 0.008) * Math.pow(frac, 3);
   if (player.generational) p *= 5;
-  return Math.min(player.generational ? 0.25 : 0.08, p);
+  return Math.min(player.generational ? 0.32 : 0.12, p);
 }
 
 /** Registro de progreso que acumula señales de decisiones del jugador
@@ -206,11 +206,11 @@ export function tryAnnualCareerStates(tracker, player, careerYear, rng) {
     tracker.profile.physicalCareStreak >= 5 &&
     !tracker.hasHad('SEGUNDO_AIRE')
   ) {
-    candidates.push({ id: 'SEGUNDO_AIRE', p: 0.04 });
+    candidates.push({ id: 'SEGUNDO_AIRE', p: 0.06 });
   }
 
   if (tracker.profile.rejectedBigOffers >= 3 && !tracker.hasHad('IDOLO_ETERNO')) {
-    candidates.push({ id: 'IDOLO_ETERNO', p: 0.012 });
+    candidates.push({ id: 'IDOLO_ETERNO', p: 0.018 });
   }
 
   for (const c of candidates) {
@@ -223,7 +223,7 @@ export function tryAnnualCareerStates(tracker, player, careerYear, rng) {
   // Pity system: garantiza al menos un estado raro entre los años 5 y 15.
   const [wStart, wEnd] = PITY_WINDOW;
   if (!tracker.pityResolved && tracker.history.length === 0 && !tracker.active) {
-    const forcedNow = careerYear >= wEnd || (careerYear >= wStart && rng.chance(0.12));
+    const forcedNow = careerYear >= wEnd || (careerYear >= wStart && rng.chance(0.16));
     if (forcedNow) {
       const chosen = pickPityState(tracker.profile, player, rng);
       tracker.pityResolved = true;

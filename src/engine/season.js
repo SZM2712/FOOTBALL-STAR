@@ -2,6 +2,7 @@ import { COUNTRY_BY_CODE } from '../data/countries.js';
 import { CLUB_CONTINENTAL_CUPS, BALLON_NAME, GOLDEN_BOOT_NAME } from '../data/clubs.js';
 import { growAttributes, overallRating, ATTR_KEYS, ATTR_LABELS } from './player.js';
 import { simulateMatch, simulateTeamMatch, rollPenaltyOpportunity, PENALTY_CHOICES } from './match.js';
+import { generateMatchLineup } from './lineup.js';
 import { PRESS_QUESTIONS } from './events.js';
 import { tryAnnualCareerStates, RARE_STATE_DEFS, narrativeFor } from './rareStates.js';
 import {
@@ -298,6 +299,39 @@ export function rollPenaltyOpportunityForMatch(state) {
   return has;
 }
 
+/** Inventa las alineaciones de 11 jugadores de ambos clubes para el partido
+ * recién jugado (goles/asistencias/calificación coherentes con el
+ * marcador), y las deja en state.lastMatchLineups para que la UI las
+ * muestre en la pantalla de resumen. Es solo flavor de esa ventana: no se
+ * persiste como parte de las estadísticas de carrera. */
+function attachMatchLineups(state, opp, result, includeUser) {
+  const confed = COUNTRY_BY_CODE[state.club.countryCode]?.confed || 'UEFA';
+  const oppConfed = COUNTRY_BY_CODE[opp.countryCode]?.confed || confed;
+  const userEntry = includeUser
+    ? {
+        name: state.player.name,
+        position: state.player.position,
+        rating: result.matchRating,
+        goals: result.goals,
+        assists: result.assists,
+      }
+    : null;
+  const home = generateMatchLineup({
+    rng: state.rng,
+    confed,
+    teamGoals: result.teamGoals,
+    oppGoals: result.oppGoals,
+    ownGoals: includeUser ? result.goals : 0,
+    ownAssists: includeUser ? result.assists : 0,
+    userEntry,
+  });
+  const away = generateMatchLineup({ rng: state.rng, confed: oppConfed, teamGoals: result.oppGoals, oppGoals: result.teamGoals });
+  state.lastMatchLineups = {
+    home: { clubName: state.club.name, players: home },
+    away: { clubName: opp.name, players: away },
+  };
+}
+
 /** Simula exactamente el próximo partido de la temporada en curso (requiere
  * haber llamado startSeason antes). decisions.penaltyChoice: id de
  * PENALTY_CHOICES si rollPenaltyOpportunityForMatch marcó que hay penal.
@@ -327,6 +361,7 @@ export function playNextMatch(state, decisions = {}) {
     ps.weeksOut -= 2;
     const r = simulateTeamMatch(state.club.rating, opp.rating, rng);
     updateTableStats(ps.tableStats, state.club.id, opp.id, r.teamGoals, r.oppGoals);
+    attachMatchLineups(state, opp, r, false);
     push(`J${m + 1}: sigues de baja, no viajas con el plantel (${state.club.name} ${r.teamGoals}-${r.oppGoals} ${opp.name}).`, 'negative');
   } else {
     const isLateSeason = m >= ps.matchesInSeason - 3;
@@ -339,6 +374,7 @@ export function playNextMatch(state, decisions = {}) {
     const result = simulateMatch(state.player, state.club.rating, opp.rating, rng, matchCtx, state.rareTracker, penaltyChoice);
     ps.pendingPenalty = false;
     updateTableStats(ps.tableStats, state.club.id, opp.id, result.teamGoals, result.oppGoals);
+    attachMatchLineups(state, opp, result, true);
 
     ps.seasonStats.matches++;
     ps.seasonStats.goals += result.goals;

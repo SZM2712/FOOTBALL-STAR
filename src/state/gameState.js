@@ -55,6 +55,7 @@ export function createGame(seed) {
     feed: [],
     currentOffers: [],
     leagueTable: null,
+    lastMatchLineups: null,
     pendingSeason: null,
     retired: false,
     retirementReason: null,
