@@ -37,4 +37,7 @@ export const REAL_CLUB_TWISTS = {
   GH: ['Asnate Kotoko', 'Hetras of Oak'],
   JP: ['Kashima Antelrs', 'Urawa Redas'],
   KR: ['FC Seuol', 'Ulsan Hyudnai'],
+
+  // ---- Tier 3-4 (algunas ligas más) ----
+  GT: ['Conunicaciones', 'Municipla', 'Xeljaú MC', 'Auroar FC'],
 };
