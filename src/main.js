@@ -248,6 +248,42 @@ function renderDiarioTab() {
   `;
 }
 
+function renderLeagueTableCard(table) {
+  if (!table) return '';
+  return `
+    <div class="card">
+      <h3>Tabla de posiciones · ${escapeHtml(table.leagueName)}</h3>
+      <div class="table-scroll">
+        <table class="league-table">
+          <thead>
+            <tr><th>#</th><th>Club</th><th>PJ</th><th>G</th><th>E</th><th>P</th><th>GF</th><th>GC</th><th>DG</th><th>Pts</th></tr>
+          </thead>
+          <tbody>
+            ${table.rows
+              .map(
+                (r) => `
+              <tr class="${r.isPlayer ? 'me' : ''}">
+                <td>${r.position}</td>
+                <td>${escapeHtml(r.name)}</td>
+                <td>${r.played}</td>
+                <td>${r.wins}</td>
+                <td>${r.draws}</td>
+                <td>${r.losses}</td>
+                <td>${r.gf}</td>
+                <td>${r.ga}</td>
+                <td>${r.gf - r.ga}</td>
+                <td>${r.points}</td>
+              </tr>`
+              )
+              .join('')}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="margin-top:6px">Tabla de fin de temporada (año ${table.year}). Tu fila usa tus resultados reales; el resto es una aproximación de la división.</p>
+    </div>
+  `;
+}
+
 function renderMercadoTab() {
   const offers = game.currentOffers || [];
   return `
@@ -267,6 +303,7 @@ function renderMercadoTab() {
           : `<p class="muted">Eres agente libre. No tienes club ni contrato: elige una de las ofertas de abajo para volver a competir.</p>`
       }
     </div>
+    ${renderLeagueTableCard(game.leagueTable)}
     <div class="card">
       <h3>Agente</h3>
       <div class="scroll-x">

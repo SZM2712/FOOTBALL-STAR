@@ -318,6 +318,12 @@ p { margin: 0; color: var(--text-dim); line-height: 1.5; }
 .spacer { flex: 1; }
 .center { text-align: center; }
 .scroll-x { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.table-scroll { overflow-x: auto; }
+.league-table { border-collapse: collapse; width: 100%; font-size: 12px; white-space: nowrap; }
+.league-table th, .league-table td { padding: 6px 8px; text-align: center; border-bottom: 1px solid var(--border); }
+.league-table th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+.league-table td:nth-child(2), .league-table th:nth-child(2) { text-align: left; }
+.league-table tr.me td { background: rgba(41, 209, 130, 0.12); font-weight: 700; color: var(--text); }
 .stat-tile {
   flex: 1;
   min-width: 84px;

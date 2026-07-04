@@ -52,6 +52,53 @@ export function rollPressConferenceQuestion(state) {
 }
 
 /**
+ * Construye una tabla de posiciones de la división del jugador: su fila usa
+ * los resultados reales de la temporada recién jugada; el resto de los
+ * clubes se aproxima estadísticamente a partir de su rating relativo (no se
+ * simula partido a partido entre rivales, alcanza para que la tabla se vea
+ * coherente sin duplicar el costo de simular toda la división).
+ */
+export function buildLeagueTable(state, leagueSystem, division, seasonStats, rng) {
+  const clubs = division.clubs;
+  const matchesPerClub = seasonStats.matches || Math.max(10, (clubs.length - 1) * 2);
+
+  const rows = clubs
+    .filter((c) => c.id !== state.club.id)
+    .map((c) => {
+      const better = clubs.filter((o) => o.rating > c.rating).length;
+      const percentile = 1 - better / Math.max(1, clubs.length - 1);
+      const expectedPPG = 1.0 + percentile * 1.3;
+      const ppg = Math.max(0, Math.min(3, expectedPPG + rng.gaussian(0, 0.35)));
+      const draws = Math.round(matchesPerClub * rng.range(0.18, 0.32));
+      const remaining = Math.max(0, matchesPerClub - draws);
+      const points = Math.round(ppg * matchesPerClub);
+      const wins = Math.max(0, Math.min(remaining, Math.round((points - draws) / 3)));
+      const losses = Math.max(0, matchesPerClub - draws - wins);
+      const gf = Math.max(0, Math.round((1.1 + percentile * 0.9) * matchesPerClub * rng.range(0.85, 1.15)));
+      const ga = Math.max(0, Math.round((1.5 - percentile * 0.9) * matchesPerClub * rng.range(0.85, 1.15)));
+      return { id: c.id, name: c.name, played: matchesPerClub, wins, draws, losses, gf, ga, points: wins * 3 + draws, isPlayer: false };
+    });
+
+  rows.push({
+    id: state.club.id,
+    name: state.club.name,
+    played: seasonStats.matches,
+    wins: seasonStats.wins,
+    draws: seasonStats.draws,
+    losses: seasonStats.losses,
+    gf: seasonStats.teamGoalsFor,
+    ga: seasonStats.teamGoalsAgainst,
+    points: seasonStats.wins * 3 + seasonStats.draws,
+    isPlayer: true,
+  });
+
+  rows.sort((a, b) => b.points - a.points || (b.gf - b.ga) - (a.gf - a.ga) || b.gf - a.gf);
+  rows.forEach((r, i) => (r.position = i + 1));
+
+  return { leagueName: leagueSystem.leagueName, divisionLabel: division.label, year: state.year, rows };
+}
+
+/**
  * Simula una temporada completa (un año de carrera): entrenamiento, partidos
  * de club, competiciones continentales, calendario de selección, vida
  * personal, finanzas, envejecimiento y chequeo de estados raros.
@@ -163,7 +210,19 @@ export function simulateSeason(state, decisions = {}) {
     const numClubs = division.clubs.length;
     const matchesInSeason = Math.max(10, (numClubs - 1) * 2);
     const rivalPool = division.clubs.filter((c) => c.id !== state.club.id);
-    const seasonStats = { matches: 0, goals: 0, assists: 0, yellow: 0, red: 0, ratings: [] };
+    const seasonStats = {
+      matches: 0,
+      goals: 0,
+      assists: 0,
+      yellow: 0,
+      red: 0,
+      ratings: [],
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      teamGoalsFor: 0,
+      teamGoalsAgainst: 0,
+    };
     let weeksOut = Math.ceil((state.suspensionWeeks || 0));
     state.suspensionWeeks = 0;
 
@@ -185,9 +244,20 @@ export function simulateSeason(state, decisions = {}) {
       seasonStats.goals += result.goals;
       seasonStats.assists += result.assists;
       seasonStats.ratings.push(result.matchRating);
+      seasonStats.teamGoalsFor += result.teamGoals;
+      seasonStats.teamGoalsAgainst += result.oppGoals;
+      if (result.result === 'win') seasonStats.wins++;
+      else if (result.result === 'draw') seasonStats.draws++;
+      else seasonStats.losses++;
       if (result.yellow) seasonStats.yellow++;
       if (result.red) seasonStats.red++;
       state.player.recentRatings = (state.player.recentRatings || []).concat(result.matchRating).slice(-10);
+
+      const resultChar = result.result === 'win' ? 'W' : result.result === 'draw' ? 'E' : 'P';
+      push(
+        `J${m + 1}${matchCtx.highPressure ? ' 🔥' : ''}: ${state.club.name} ${result.teamGoals}-${result.oppGoals} ${opp.name} (${resultChar})`,
+        result.result === 'loss' ? 'negative' : 'normal'
+      );
 
       if (result.inZona) {
         state.rareTracker.legendaryNights++;
@@ -239,11 +309,18 @@ export function simulateSeason(state, decisions = {}) {
       goals: seasonStats.goals,
       assists: seasonStats.assists,
       avgRating: Math.round(avgRating * 100) / 100,
+      wins: seasonStats.wins,
+      draws: seasonStats.draws,
+      losses: seasonStats.losses,
+      teamGoalsFor: seasonStats.teamGoalsFor,
+      teamGoalsAgainst: seasonStats.teamGoalsAgainst,
     });
 
     state.fame = clamp(
       state.fame + seasonStats.goals * 0.6 + seasonStats.assists * 0.3 + (avgRating - 6) * 3 + state.club.prestige / 40
     );
+
+    state.leagueTable = buildLeagueTable(state, leagueSystem, division, seasonStats, rng);
 
     // ---- Copa continental de clubes ----
     if (state.club.prestige >= 55 && rng.chance(0.55)) {

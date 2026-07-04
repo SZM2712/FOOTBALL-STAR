@@ -53,6 +53,7 @@ export function createGame(seed) {
     trophies: [],
     feed: [],
     currentOffers: [],
+    leagueTable: null,
     retired: false,
     retirementReason: null,
     suspensionWeeks: 0,
