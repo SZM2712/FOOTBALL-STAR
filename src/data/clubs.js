@@ -1,4 +1,5 @@
 import { randomClubName } from './names.js';
+import { REAL_CLUB_TWISTS } from './realClubNames.js';
 
 // Cada tier define cuántas divisiones tiene el país, cuántos clubes por
 // división, y el rango de rating/presupuesto de sus clubes. Todo ficticio.
@@ -33,6 +34,15 @@ export function generateLeagueSystem(country, rng) {
         budgetM: Math.round(budget * 10) / 10,
         prestige: Math.round(t * 100),
       });
+    }
+    // En la máxima división de los países más "reconocibles", los clubes
+    // de mayor prestigio toman un nombre inspirado en un club real célebre
+    // (con una pequeña variación de letras, nunca el nombre exacto).
+    if (d === 0 && REAL_CLUB_TWISTS[country.code]) {
+      const realNames = rng.shuffle(REAL_CLUB_TWISTS[country.code]);
+      for (let i = 0; i < Math.min(realNames.length, clubs.length); i++) {
+        clubs[i].name = realNames[i];
+      }
     }
     divisions.push({
       level: d,

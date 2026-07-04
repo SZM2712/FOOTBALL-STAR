@@ -236,6 +236,9 @@ function renderMercadoTab() {
   return `
     <div class="card">
       <h3>Tu club actual</h3>
+      ${
+        game.club && game.contract
+          ? `
       <div class="row between">
         <div>
           <div style="font-weight:700">${escapeHtml(game.club.name)}</div>
@@ -243,7 +246,9 @@ function renderMercadoTab() {
         </div>
         <div class="pill accent">${fmtMoney(game.contract.salaryM)}/año</div>
       </div>
-      <p class="muted" style="margin-top:6px">Contrato: ${game.contract.years} años · Cláusula ${fmtMoney(game.contract.clauseM)}</p>
+      <p class="muted" style="margin-top:6px">Contrato: ${game.contract.years} año${game.contract.years === 1 ? '' : 's'} restante${game.contract.years === 1 ? '' : 's'} · Cláusula ${fmtMoney(game.contract.clauseM)}</p>`
+          : `<p class="muted">Eres agente libre. No tienes club ni contrato: elige una de las ofertas de abajo para volver a competir.</p>`
+      }
     </div>
     <div class="card">
       <h3>Agente</h3>

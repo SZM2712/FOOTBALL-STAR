@@ -1,6 +1,7 @@
 import { AGENT_TIERS } from './transferMarket.js';
 
 export function payYearlySalary(state) {
+  if (!state.contract) return 0;
   const tier = AGENT_TIERS[state.agent.tier];
   const gross = state.contract.salaryM || 0;
   const net = gross * (1 - tier.commission);

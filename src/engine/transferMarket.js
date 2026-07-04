@@ -28,6 +28,42 @@ export function estimateValueM(state) {
   return Math.round(marketValue(state.player, state.fame) * 10) / 10;
 }
 
+/** Decide si el club quiere renovarte cuando el contrato llega a su fin. */
+function renewalChance(player, club, rating) {
+  let p = 0.82;
+  if (player.age >= 35) p -= 0.3;
+  else if (player.age >= 31) p -= 0.1;
+  if (rating < club.rating - 12) p -= 0.25;
+  else if (rating >= club.rating + 5) p += 0.1;
+  return Math.max(0.1, Math.min(0.96, p));
+}
+
+/** Se llama cuando state.contract.years llega a 0: o el club renueva en
+ * condiciones acordes al nivel actual, o el jugador queda libre (sin club
+ * ni contrato) y debe buscar acomodo en el mercado de fichajes. */
+export function attemptContractRenewal(state, rng) {
+  if (!state.club || !state.contract) return null;
+  const rating = overallRating(state.player);
+  const wantsRenew = rng.chance(renewalChance(state.player, state.club, rating));
+
+  if (wantsRenew) {
+    const valueM = estimateValueM(state);
+    const years = rng.int(2, 4);
+    const salaryM = Math.max(0.02, Math.round((valueM / 4) * rng.range(0.85, 1.3) * 100) / 100);
+    const clauseM = Math.round(valueM * rng.range(1.4, 2.2) * 10) / 10;
+    state.contract = { salaryM, years, clauseM };
+    return { renewed: true, text: `Renuevas tu contrato con ${state.club.name} por ${years} años más.` };
+  }
+
+  const clubName = state.club.name;
+  state.club = null;
+  state.contract = null;
+  return {
+    renewed: false,
+    text: `Tu contrato con ${clubName} llega a su fin y el club decide no renovarte. Eres agente libre: tendrás que buscar equipo en el mercado.`,
+  };
+}
+
 /** Genera ofertas de fichaje coherentes con nivel/edad/liga del jugador. */
 export function generateOffers(state) {
   const { rng, player, fame, agent } = state;
@@ -35,7 +71,10 @@ export function generateOffers(state) {
   const rating = overallRating(player);
   const valueM = estimateValueM(state);
   const [minN, maxN] = tier.offerCount;
-  const n = rng.int(minN, maxN);
+  // Un agente libre está mucho más disponible en el mercado: más clubes
+  // pican, sin costo de traspaso de por medio.
+  const freeAgentBoost = state.club ? 0 : 2;
+  const n = rng.int(minN, maxN) + freeAgentBoost;
   const offers = [];
 
   const candidateCountries = Object.values(COUNTRY_BY_CODE)
@@ -82,7 +121,7 @@ export function generateOffers(state) {
 export function acceptOffer(state, offer) {
   const tier = AGENT_TIERS[state.agent.tier];
   const signingBonus = offer.feeM * 0.05 * (1 - tier.commission);
-  const prevSalaryM = state.contract.salaryM || 0;
+  const prevSalaryM = state.contract?.salaryM || 0;
   state.money += signingBonus;
   state.club = { ...offer.club, leagueName: offer.league, countryCode: offer.country.code };
   state.contract = { salaryM: offer.wageM, years: offer.years, clauseM: offer.clauseM };
@@ -108,7 +147,7 @@ export function acceptOffer(state, offer) {
 }
 
 export function rejectOffer(state, offer) {
-  const isBig = offer.feeM > estimateValueM(state) * 1.1 || offer.wageM > (state.contract.salaryM || 0.1) * 1.6;
+  const isBig = offer.feeM > estimateValueM(state) * 1.1 || offer.wageM > (state.contract?.salaryM || 0.1) * 1.6;
   if (isBig) {
     // se acumula una única vez por año en season.js, sin importar cuántas
     // ofertas grandes se rechacen en la misma ventana de mercado.

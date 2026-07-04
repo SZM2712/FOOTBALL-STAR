@@ -46,7 +46,9 @@ function runCareer(seed) {
   let iterations = 0;
   while (!state.retired && state.player.age < 40 && iterations < 30) {
     if (state.currentOffers && state.currentOffers.length) {
-      if (state.rng.chance(0.18)) {
+      // agente libre: un jugador racional prioriza firmar cuanto antes.
+      const acceptChance = state.club ? 0.18 : 0.85;
+      if (state.rng.chance(acceptChance)) {
         acceptOffer(state, state.rng.pick(state.currentOffers));
       } else {
         for (const o of state.currentOffers) rejectOffer(state, o);

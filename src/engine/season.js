@@ -18,7 +18,7 @@ import {
   HOBBIES,
   TRAVEL_OPTIONS,
 } from './personalLife.js';
-import { getLeagueSystem, generateOffers } from './transferMarket.js';
+import { getLeagueSystem, generateOffers, attemptContractRenewal } from './transferMarket.js';
 import { payYearlySalary } from './finance.js';
 import {
   isWorldCupYear,
@@ -154,7 +154,10 @@ export function simulateSeason(state, decisions = {}) {
   }
 
   // ---- 5. Temporada de club ----
-  if (!state.retired) {
+  if (!state.retired && !state.club) {
+    push('Sigues sin equipo. Entrenas por tu cuenta mientras tu agente busca una oportunidad.', 'negative');
+  }
+  if (!state.retired && state.club) {
     const leagueSystem = getLeagueSystem(state, state.club.countryCode);
     const division = leagueSystem.divisions[state.club.division] || leagueSystem.divisions[0];
     const numClubs = division.clubs.length;
@@ -375,6 +378,15 @@ export function simulateSeason(state, decisions = {}) {
   // ---- 9. Finanzas ----
   payYearlySalary(state);
   state.peakMoney = Math.max(state.peakMoney, state.money);
+
+  // ---- 9.5 Vencimiento de contrato ----
+  if (state.club && state.contract) {
+    state.contract.years -= 1;
+    if (state.contract.years <= 0) {
+      const resolution = attemptContractRenewal(state, rng);
+      if (resolution) push(resolution.text, resolution.renewed ? 'event' : 'negative');
+    }
+  }
 
   // ---- 10. Retiro automático por edad límite ----
   if (state.player.age >= RETIREMENT_AGE_HARD) {
