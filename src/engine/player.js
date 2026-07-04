@@ -49,7 +49,7 @@ export function createPlayer(rng, country, options = {}) {
   for (const k of ATTR_KEYS) {
     const w = POSITION_WEIGHTS[position][k];
     // atributos relevantes a la posición parten más altos, el resto más bajos
-    const base = potential * factor * (0.55 + w * 1.6);
+    const base = potential * factor * (0.7 + w * 1.3);
     const childBonus = ch.attrMods?.[k] || 0;
     attrs[k] = clampAttr(Math.round(base + childBonus + rng.gaussian(0, 4)));
   }
@@ -89,9 +89,9 @@ export function growAttributes(player, rng, trainingBonus = {}) {
   const factor = ageFactor(player.age, player.position, player.extraLongevity || 0);
   for (const k of ATTR_KEYS) {
     const w = POSITION_WEIGHTS[player.position][k];
-    const targetCeiling = player.potential * factor * (0.55 + w * 1.6);
+    const targetCeiling = player.potential * factor * (0.7 + w * 1.3);
     const current = player.attrs[k];
-    const pull = (targetCeiling - current) * 0.35;
+    const pull = (targetCeiling - current) * 0.5;
     const bonus = trainingBonus[k] || 0;
     const noise = rng.gaussian(0, 1.2);
     player.attrs[k] = clampAttr(Math.round(current + pull + bonus + noise));

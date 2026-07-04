@@ -189,8 +189,11 @@ export function startSeason(state, decisions = {}) {
       state.rareTracker.profile.physicalCareStreak = Math.max(0, (state.rareTracker.profile.physicalCareStreak || 0) - 1);
     }
 
-    // Especialización sostenida: rara vez, el techo mismo sube un punto.
-    if (newCount >= 4 && (state.player.potentialNudges || 0) < 3 && rng.chance(0.06)) {
+    // Especialización sostenida: el techo mismo puede subir. Con constancia
+    // real (varios años seguidos en el mismo atributo) esto debería ser
+    // alcanzable, no un golpe de suerte aislado: un jugador dedicado tiene
+    // que poder superar su potencial de partida, aunque cueste.
+    if (newCount >= 3 && (state.player.potentialNudges || 0) < 6 && rng.chance(0.14)) {
       state.player.potential = Math.min(99, state.player.potential + 1);
       state.player.potentialNudges = (state.player.potentialNudges || 0) + 1;
       push(`Años de trabajo en ${ATTR_LABELS[focus]} rinden frutos: superas tus propios límites y tu techo como jugador crece.`, 'rare');
