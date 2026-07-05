@@ -38,11 +38,22 @@ import { showModal, showInfoModal, showMatchSummary, showTimingChallenge, showLi
 import { renderPlayerCard } from './ui/components/playerCard.js';
 import { renderAttributeBars } from './ui/components/attributeBars.js';
 import { renderFeed } from './ui/components/feed.js';
+import { joinRoom, claimClub, subscribeRoom } from './multiplayer/sharedMarket.js';
 
 let game = null;
 let activeTab = 'diario';
 let busy = false;
 let pendingDecisions = null; // decisiones de pre-temporada, vivas entre startSeason y finishSeason
+
+// ---- Mercado de fichajes compartido (multijugador liviano por sala) ----
+let mpStatus = 'idle'; // idle | connecting | joined | error
+let mpRoomCode = null;
+let mpPlayerName = null;
+let mpClaimedClubIds = new Set();
+let mpActivity = [];
+let mpPlayers = [];
+let mpError = null;
+let mpUnsubscribe = null;
 
 const app = document.getElementById('app');
 
@@ -347,6 +358,7 @@ function renderMercadoTab() {
       }
     </div>
     ${renderLeagueTableCard(game.leagueTable)}
+    ${renderMultiplayerCard()}
     <div class="card">
       <h3>Agente</h3>
       <div class="scroll-x">
@@ -365,22 +377,24 @@ function renderMercadoTab() {
       ${
         offers.length
           ? offers
-              .map(
-                (o) => `
-        <div class="card" style="margin-bottom:8px">
+              .map((o) => {
+                const taken = mpStatus === 'joined' && mpClaimedClubIds.has(o.club.id);
+                return `
+        <div class="card" style="margin-bottom:8px${taken ? ';opacity:.55' : ''}">
           <div class="row between">
             <div>
               <div style="font-weight:700">${escapeHtml(o.club.name)} ${o.isGiant ? '<span class="pill gold">Gigante</span>' : ''} ${o.isExotic ? '<span class="pill purple">Exótico</span>' : ''}</div>
               <div class="muted">${escapeHtml(o.league)} · Rating ${o.club.rating}</div>
               <div class="muted">Salario ${fmtMoney(o.wageM)}/año · Fee ${fmtMoney(o.feeM)} · ${o.years} años</div>
+              ${taken ? '<div class="muted" style="color:var(--danger)">🔒 Ya fichado por otro jugador de tu sala</div>' : ''}
             </div>
           </div>
           <div class="row" style="margin-top:8px">
-            <button class="btn primary" data-accept-offer="${o.id}" style="flex:1">Aceptar</button>
+            <button class="btn primary" data-accept-offer="${o.id}" style="flex:1" ${taken ? 'disabled' : ''}>Aceptar</button>
             <button class="btn" data-reject-offer="${o.id}" style="flex:1">Rechazar</button>
           </div>
-        </div>`
-              )
+        </div>`;
+              })
               .join('')
           : '<p class="muted">No tienes ofertas este año.</p>'
       }
@@ -390,6 +404,41 @@ function renderMercadoTab() {
       ${renderSponsorships()}
     </div>
   `;
+}
+
+function renderMultiplayerCard() {
+  if (mpStatus === 'joined') {
+    return `
+    <div class="card">
+      <h3>Mercado compartido · Sala "${escapeHtml(mpRoomCode)}"</h3>
+      <p class="muted">En la sala: ${mpPlayers.length ? mpPlayers.map((p) => escapeHtml(p)).join(', ') : '...'}</p>
+      <div class="feed" style="margin-top:8px; max-height:160px; overflow-y:auto">
+        ${
+          mpActivity.length
+            ? mpActivity.map((a) => `<div class="feed-entry event"><div class="text">${escapeHtml(a.text)}</div></div>`).join('')
+            : '<p class="muted">Todavía no hay actividad en la sala.</p>'
+        }
+      </div>
+      <button class="btn" data-leave-room style="margin-top:10px">Salir de la sala</button>
+    </div>`;
+  }
+  return `
+    <div class="card">
+      <h3>Mercado compartido (multijugador)</h3>
+      <p class="muted">Unite a una sala con tus amigos: si alguien ficha un club, nadie más de la sala lo puede fichar.</p>
+      <div class="field" style="margin-top:8px">
+        <label>Código de sala</label>
+        <input type="text" id="mp-room-input" placeholder="ej: mundial2026" style="width:100%; padding:8px; border-radius:8px; background:var(--bg-elev-1); border:1px solid var(--border); color:var(--text)" />
+      </div>
+      <div class="field" style="margin-top:8px">
+        <label>Tu nombre</label>
+        <input type="text" id="mp-name-input" placeholder="ej: ${escapeHtml(game.player.name.split(' ')[0])}" style="width:100%; padding:8px; border-radius:8px; background:var(--bg-elev-1); border:1px solid var(--border); color:var(--text)" />
+      </div>
+      <button class="btn primary block" data-join-room style="margin-top:10px" ${mpStatus === 'connecting' ? 'disabled' : ''}>
+        ${mpStatus === 'connecting' ? 'Conectando...' : 'Unirse a la sala'}
+      </button>
+      ${mpStatus === 'error' ? `<p class="muted" style="color:var(--danger); margin-top:6px">${escapeHtml(mpError || 'No se pudo conectar.')}</p>` : ''}
+    </div>`;
 }
 
 function renderSponsorships() {
@@ -572,6 +621,11 @@ function attachGameHandlers() {
   const closeSeasonBtn = app.querySelector('[data-close-season]');
   if (closeSeasonBtn) closeSeasonBtn.addEventListener('click', handleCloseSeason);
 
+  const joinRoomBtn = app.querySelector('[data-join-room]');
+  if (joinRoomBtn) joinRoomBtn.addEventListener('click', handleJoinRoom);
+  const leaveRoomBtn = app.querySelector('[data-leave-room]');
+  if (leaveRoomBtn) leaveRoomBtn.addEventListener('click', handleLeaveRoom);
+
   app.querySelectorAll('[data-agent]').forEach((btn) => {
     btn.addEventListener('click', () => {
       game.agent.tier = btn.getAttribute('data-agent');
@@ -580,10 +634,22 @@ function attachGameHandlers() {
   });
 
   app.querySelectorAll('[data-accept-offer]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-accept-offer');
       const offer = game.currentOffers.find((o) => o.id === id);
-      if (offer) acceptOffer(game, offer);
+      if (!offer) return;
+
+      if (mpStatus === 'joined') {
+        btn.disabled = true;
+        const won = await claimClub(mpRoomCode, offer.club, mpPlayerName);
+        if (!won) {
+          mpClaimedClubIds.add(offer.club.id);
+          render();
+          return;
+        }
+      }
+
+      acceptOffer(game, offer);
       game.currentOffers = [];
       render();
     });
@@ -1020,6 +1086,55 @@ async function handleAdvanceYear() {
   if (!isMatchdayPending(game)) {
     await handleCloseSeason();
   }
+}
+
+async function handleJoinRoom() {
+  const roomInput = document.getElementById('mp-room-input');
+  const nameInput = document.getElementById('mp-name-input');
+  const roomCode = (roomInput?.value || '').trim();
+  const playerName = (nameInput?.value || '').trim() || game.player.name.split(' ')[0];
+  if (!roomCode) return;
+
+  mpStatus = 'connecting';
+  mpError = null;
+  render();
+
+  try {
+    await joinRoom(roomCode, playerName);
+    mpUnsubscribe = await subscribeRoom(roomCode, {
+      onClaims: (ids) => {
+        mpClaimedClubIds = ids;
+        render();
+      },
+      onActivity: (items) => {
+        mpActivity = items;
+        render();
+      },
+      onPlayers: (names) => {
+        mpPlayers = names;
+        render();
+      },
+    });
+    mpRoomCode = roomCode;
+    mpPlayerName = playerName;
+    mpStatus = 'joined';
+  } catch (e) {
+    mpStatus = 'error';
+    mpError = 'No se pudo conectar al mercado compartido. Revisá tu conexión e intentá de nuevo.';
+  }
+  render();
+}
+
+function handleLeaveRoom() {
+  if (mpUnsubscribe) mpUnsubscribe();
+  mpUnsubscribe = null;
+  mpStatus = 'idle';
+  mpRoomCode = null;
+  mpPlayerName = null;
+  mpClaimedClubIds = new Set();
+  mpActivity = [];
+  mpPlayers = [];
+  render();
 }
 
 async function handlePlayNextMatch() {
