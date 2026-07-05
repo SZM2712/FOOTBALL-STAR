@@ -315,6 +315,41 @@ p { margin: 0; color: var(--text-dim); line-height: 1.5; }
   background: var(--accent);
   transition: width 0.35s ease;
 }
+.pitch {
+  position: relative;
+  height: 64px;
+  border-radius: 10px;
+  background: repeating-linear-gradient(90deg, #1f6b3f 0 24px, #1a5c36 24px 48px);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.pitch-halfway { position: absolute; left: 50%; top: 0; width: 2px; height: 100%; background: rgba(255,255,255,.35); }
+.pitch-circle {
+  position: absolute; left: 50%; top: 50%;
+  width: 34px; height: 34px;
+  border: 2px solid rgba(255,255,255,.35);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+.pitch-goal { position: absolute; top: 50%; width: 5px; height: 26px; background: rgba(255,255,255,.55); transform: translateY(-50%); }
+.pitch-goal.left { left: 0; }
+.pitch-goal.right { right: 0; }
+.pitch-ball {
+  position: absolute;
+  top: 50%;
+  left: 12%;
+  transform: translate(-50%, -50%);
+  font-size: 17px;
+  line-height: 1;
+  transition: left 0.5s ease;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.5));
+}
+.pitch-ball.goal-flash { animation: goalFlash 0.7s ease; }
+@keyframes goalFlash {
+  0% { transform: translate(-50%, -50%) scale(1); }
+  35% { transform: translate(-50%, -50%) scale(1.9); }
+  100% { transform: translate(-50%, -50%) scale(1); }
+}
 .live-match-feed { max-height: 44vh; overflow-y: auto; gap: 8px; }
 .live-reveal { animation: liveIn 0.3s ease; }
 @keyframes liveIn {

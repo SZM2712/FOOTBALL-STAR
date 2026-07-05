@@ -89,6 +89,13 @@ export function showLiveMatch({ lines, matchesInSeason, matchIndex }) {
         <h2>Jornada ${matchIndex + 1}${matchesInSeason ? ` / ${matchesInSeason}` : ''}</h2>
         <div class="live-clock"><span data-minute>0'</span></div>
         <div class="live-progress"><span data-progress-fill></span></div>
+        <div class="pitch" data-pitch>
+          <div class="pitch-halfway"></div>
+          <div class="pitch-circle"></div>
+          <div class="pitch-goal left"></div>
+          <div class="pitch-goal right"></div>
+          <div class="pitch-ball" data-ball>⚽</div>
+        </div>
         <div class="feed live-match-feed" data-live-feed></div>
         <button class="btn block" data-skip>Adelantar ▶▶</button>
       </div>
@@ -97,6 +104,19 @@ export function showLiveMatch({ lines, matchesInSeason, matchIndex }) {
     const fillEl = overlay.querySelector('[data-progress-fill]');
     const feedEl = overlay.querySelector('[data-live-feed]');
     const skipBtn = overlay.querySelector('[data-skip]');
+    const ballEl = overlay.querySelector('[data-ball]');
+
+    function moveBallRandomly() {
+      const pct = 12 + Math.random() * 76;
+      ballEl.style.left = `${pct}%`;
+    }
+
+    function celebrateGoal() {
+      const towardsRight = Math.random() < 0.5;
+      ballEl.style.left = towardsRight ? '90%' : '10%';
+      ballEl.classList.add('goal-flash');
+      setTimeout(() => ballEl.classList.remove('goal-flash'), 700);
+    }
 
     const total = lines.length || 1;
     let i = 0;
@@ -122,6 +142,8 @@ export function showLiveMatch({ lines, matchesInSeason, matchIndex }) {
       div.innerHTML = `<div class="text">${escapeHtml(l.text)}</div>`;
       feedEl.appendChild(div);
       feedEl.scrollTop = feedEl.scrollHeight;
+      if (l.text.includes('GOL')) celebrateGoal();
+      else moveBallRandomly();
       i++;
       const delay = l.type === 'rare' ? 900 : 550;
       timeoutId = setTimeout(revealNext, delay);
@@ -148,6 +170,7 @@ export function showLiveMatch({ lines, matchesInSeason, matchIndex }) {
     });
 
     document.body.appendChild(overlay);
+    moveBallRandomly();
     timeoutId = setTimeout(revealNext, 400);
   });
 }
